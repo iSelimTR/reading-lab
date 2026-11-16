@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#136f63">
+  <meta name="description" content="把 PDF 变成自己的英语阅读练习，答题后查看解析和原文依据。">
+  <title>Reading Lab · 读懂每一篇</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23136f63'/%3E%3Cpath d='M16 16h20q12 0 12 12v22H28q-12 0-12-12z' fill='%23fff'/%3E%3Cpath d='M26 26h12M26 34h12' stroke='%23136f63' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./styles.css">
+  <script defer src="./vendor/tesseract/tesseract.min.js"></script>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="site-header"><a class="brand" href="./"><span class="brand-icon" aria-hidden="true">R<span>↗</span></span><span>Reading Lab<small>你的阅读练习室</small></span></a><span class="header-note">一篇文章，一点进步。</span></header>
+  <main>
+    <section class="hero"><div><p class="eyebrow">READ · THINK · UNDERSTAND</p><h1>把阅读材料，<br>变成你的练习。</h1><p class="hero-copy">上传 PDF，生成选择题。做完回到原文，<br class="desktop-only">看懂每一个答案的理由。</p></div><div class="hero-art" aria-hidden="true"><div class="paper paper-back"></div><div class="paper paper-front"><span class="paper-label">YOUR NEXT CHAPTER</span><div class="ink-line long"></div><div class="ink-line"></div><div class="ink-line highlight"></div><div class="ink-line long"></div><div class="art-answer"><span>✓</span> Read for a reason.</div><div class="ink-line"></div></div><span class="art-badge">理解，比做完更重要</span></div></section>
+    <ol class="steps" aria-label="练习步骤"><li class="active" id="step1"><span>01</span> 准备文章</li><li id="step2"><span>02</span> 阅读答题</li><li id="step3"><span>03</span> 批改复盘</li></ol>
+    <div id="message" class="message" role="status" aria-live="polite" hidden></div>
+    <section id="setup" class="setup-grid">
+      <section class="panel source-panel"><div class="panel-heading"><div><p class="eyebrow">START WITH A TEXT</p><h2>今天读什么？</h2></div><button id="demo" class="text-button" type="button">试一篇示例 ↗</button></div>
+        <label class="dropzone" id="dropzone"><input id="file" type="file" accept="application/pdf,.pdf"><span class="upload-icon" aria-hidden="true">↑</span><strong id="fileName">选择或拖入一份 PDF</strong><span>文字版与扫描件均可 · 最大 30 MB</span></label>
+        <div id="pdfControls" hidden><div class="field-row"><label>起始页<input id="startPage" type="number" min="1" value="1"></label><label>结束页<input id="endPage" type="number" min="1" value="1"></label><label>扫描文字语言<select id="ocrLanguage"><option value="eng">English</option><option value="eng+chi_sim">English + 简体中文</option></select></label></div><div class="extract-actions"><label class="check-label"><input id="forceOcr" type="checkbox"> 强制 OCR 识别</label><button id="extract" class="secondary-button" type="button">识别所选页面</button></div><p class="help" id="pdfHint"></p></div>
+        <div class="text-heading"><label for="passage">文章正文</label><span id="wordCount">0 words</span></div><textarea id="passage" placeholder="也可以直接粘贴英文文章。识别完成后，请检查正文，删除页眉、答案和与文章无关的内容。" spellcheck="false"></textarea><p class="help">PDF 在浏览器内处理。扫描件首次识别需下载语言包。AI 模式会把这里的正文发送给已配置的 AI 服务。</p>
+      </section>
+      <aside class="panel settings-panel"><p class="eyebrow">MAKE IT YOURS</p><h2>设置这次练习</h2><label class="field-label" for="mode">出题方式</label><select id="mode"><option value="basic">基础模式 · 原文填空选择题</option><option value="ai" disabled>AI 理解题 · 需服务端配置</option></select><p class="help" id="modeHelp">基础模式免费使用，根据文章自动生成原文填空题。</p><label class="field-label" for="questionCount">题目数量</label><select id="questionCount"><option value="3">3 道 · 热身一下</option><option value="5" selected>5 道 · 每日练习</option><option value="10">10 道 · 深入阅读</option><option value="15">15 道 · 多练一点</option></select><label class="field-label" for="difficulty">AI 理解题难度</label><select id="difficulty" disabled><option value="accessible">基础 · 明确信息定位</option><option value="standard" selected>进阶 · 同义替换与细节</option><option value="challenging">挑战 · 推断与段落主旨</option></select><div class="setting-note"><span>✦</span><p>先独立选答案，再看解析。<br>每道题都能回到原文找依据。</p></div><button id="generate" class="primary-button" type="button">生成我的练习 <span>→</span></button><p class="privacy-note">基础模式的文章与答题过程保留在当前浏览器页面。</p></aside>
+    </section>
+    <section id="practice" hidden><div class="practice-heading"><div><p class="eyebrow" id="quizMode"></p><h2 id="quizTitle"></h2></div><div class="practice-actions"><span id="progress"></span><button id="edit" class="secondary-button" type="button">更换文章</button></div></div><div id="score" class="score-panel" hidden></div><div class="practice-grid"><aside class="panel reading-panel"><div class="panel-heading"><h3>阅读原文</h3><span class="small-pill">PASSAGE</span></div><div id="readingText" class="reading-text"></div></aside><div><form id="quizForm"><div id="questions"></div><div class="submit-bar"><p id="submitHint">选好答案后，提交查看解析。</p><button id="submit" class="primary-button" type="submit">提交并批改 →</button></div></form><div id="reviewActions" class="review-actions" hidden><button id="retryWrong" class="primary-button" type="button">重练错题</button><button id="retryAll" class="secondary-button" type="button">重新练习全部</button><button id="export" class="text-button" type="button">下载练习记录 ↓</button></div></div></div></section>
+    <footer><span>Reading Lab</span><span>从看见单词，到读懂意思。</span><span>PDF → Practice → Progress</span></footer>
+  </main>
+</body>
+</html>
