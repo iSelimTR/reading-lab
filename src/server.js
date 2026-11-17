@@ -149,6 +149,7 @@ export function createApp({ env = process.env, fetcher = fetch } = {}) {
       if (pathname.startsWith('/api/')) return sendJson(response, 404, { error: '接口不存在。' });
       if (!['GET', 'HEAD'].includes(request.method)) return sendJson(response, 405, { error: '请求方法不支持。' });
       const mounts = [
+        ['/vendor/docx/', 'node_modules/docx/dist/'],
         ['/vendor/pdfjs/', 'node_modules/pdfjs-dist/'],
         ['/vendor/tesseract/', 'node_modules/tesseract.js/dist/'],
         ['/vendor/tesseract-core/', 'node_modules/tesseract.js-core/'],

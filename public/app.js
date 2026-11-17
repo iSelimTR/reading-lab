@@ -252,12 +252,16 @@ $('edit').addEventListener('click', () => {
   $('step1').classList.add('active'); $('step2').classList.remove('active'); $('step3').classList.remove('active');
   tell(); $('setup').scrollIntoView({ behavior: 'smooth' });
 });
-$('export').addEventListener('click', () => {
-  const payload = { version: 1, date: new Date().toISOString(), title: currentQuiz.title, mode: currentQuiz.mode,
-    passage: generationPassage, annotations, readingFontSize: Number($('readingFontSize').value), questions, answers, result: gradeQuiz(questions, answers) };
-  const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = `reading-lab-${new Date().toISOString().slice(0, 10)}.json`; anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+$('export').addEventListener('click', async () => {
+  if (!submitted || !currentQuiz) return;
+  $('export').disabled = true;
+  $('export').textContent = '正在生成 Word…';
+  try {
+    const { downloadReviewWord } = await import('./export-word.js');
+    await downloadReviewWord({title:currentQuiz.title, passage:generationPassage, questions:[...questions], answers:{...answers}, annotations:annotations.map(note=>({...note}))});
+    tell('Word 复盘已生成，包含原文高亮、你的作答与逐题解析。请在浏览器下载列表查看。');
+  } catch { tell('Word 导出失败，请刷新页面后重试，并确认程序依赖安装完整。',true); }
+  finally { $('export').disabled = false; $('export').textContent = '下载 Word 复盘 ↓'; }
 });
 
 try {

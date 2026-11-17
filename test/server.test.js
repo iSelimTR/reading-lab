@@ -23,6 +23,7 @@ test('serves app assets while keeping server files and credentials inaccessible'
     assert.equal((await fetch(`${base}/.env`)).status, 404);
     assert.equal((await fetch(`${base}/src/server.js`)).status, 404);
     assert.equal((await fetch(`${base}/vendor/pdfjs/build/pdf.mjs`)).status, 200);
+    assert.equal((await fetch(`${base}/vendor/docx/index.mjs`)).status, 200);
     assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { aiEnabled: false, deepseekAvailable: true, deepseekConfigured: false, deepseekModel: 'deepseek-flash' });
   });
 });

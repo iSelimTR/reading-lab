@@ -4,7 +4,9 @@
   "private": true,
   "description": "Upload a PDF, build reading quizzes and review answers with evidence.",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node --env-file-if-exists=.env src/server.js",
     "dev": "node --env-file-if-exists=.env --watch src/server.js",
@@ -12,7 +14,9 @@
     "test": "node --test"
   },
   "dependencies": {
+    "docx": "^9.15.4",
     "pdfjs-dist": "^5.4.449",
-    "tesseract.js": "^6.0.1"
+    "tesseract.js": "^6.0.1",
+    "tesseract.js-core": "^6.1.2"
   }
 }
