@@ -1,6 +1,6 @@
 import { generateBasicQuiz, gradeQuiz, DEMO_TEXT } from './src/questions.js';
 import { openPDF, extractPDF } from './pdf.js';
-import { selectionContext, vocabularyIdentity } from './vocabulary.js';
+import { selectionContext, vocabularyIdentity, vocabularyMarkers } from './vocabulary.js';
 import {floatingPosition} from './floating-position.js';
 
 const $ = id => document.getElementById(id);
@@ -316,11 +316,12 @@ updateAISettings();
 // Annotation offsets refer to readingText.textContent, excluding decorative question badges.
 function renderPassage() {
   let offset = 0;
+  const markers = vocabularyMarkers(generationPassage.split(/\n\s*\n/).filter(Boolean).join(''),vocabulary);
   const paragraphs = generationPassage.split(/\n\s*\n/).filter(Boolean).map(text => {
     const paragraph = element('p');
     const start = offset, end = start + text.length;
     const relevant = annotations.filter(note => note.start < end && note.end > start);
-    const boundaries = [...new Set([start, end, ...relevant.flatMap(note => [Math.max(start, note.start), Math.min(end, note.end)])])].sort((a,b) => a-b);
+    const boundaries = [...new Set([start, end, ...markers.filter(marker=>marker.end>start&&marker.end<=end).map(marker=>marker.end), ...relevant.flatMap(note => [Math.max(start, note.start), Math.min(end, note.end)])])].sort((a,b) => a-b);
     for (let index = 0; index < boundaries.length - 1; index++) {
       const from = boundaries[index], to = boundaries[index+1];
       const active = relevant.filter(note => note.start < to && note.end > from);
@@ -331,6 +332,12 @@ function renderPassage() {
         if (active.some(note => note.type === 'highlight')) span.classList.add('user-highlight');
         span.title = active.some(note => note.type === 'question') ? '这里有疑问，可在下方“我的标注”中移除' : '我的高亮';
         paragraph.append(span);
+      }
+      for(const marker of markers.filter(marker=>marker.end===to)) {
+        const gloss=element('span','inline-gloss');
+        gloss.dataset.gloss='（'+marker.meaning+'）';
+        gloss.setAttribute('aria-label',gloss.dataset.gloss);
+        paragraph.append(gloss);
       }
     }
     offset = end;
@@ -424,7 +431,7 @@ function renderVocabulary() {
   $('vocabularyList').replaceChildren(...vocabulary.map(entry=>{
     const row=element('li'),text=element('span');text.append(element('strong','',entry.term),element('br'),document.createTextNode(entry.contextualMeaning));
     const remove=element('button','text-button','移除');remove.type='button';remove.setAttribute('aria-label','移除生词 '+entry.term);
-    remove.addEventListener('click',()=>{vocabulary=vocabulary.filter(item=>vocabularyIdentity(item)!==vocabularyIdentity(entry));renderVocabulary();updateVocabularyButton();});
+    remove.addEventListener('click',()=>{vocabulary=vocabulary.filter(item=>vocabularyIdentity(item)!==vocabularyIdentity(entry));renderVocabulary();renderPassage();updateVocabularyButton();});
     row.append(text,remove);return row;
   }));
 }
@@ -451,7 +458,20 @@ $('translateSelection').addEventListener('click',async()=>{
   }catch(error){if(version===translationVersion)$('translationStatus').textContent=error.message;}
   finally{if(version===translationVersion){translationBusy=false;renderAnnotationControls();}}
 });
-$('addVocabulary').addEventListener('click',()=>{if(!translationResult)return;if(!vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult)))vocabulary.push({...translationResult});renderVocabulary();updateVocabularyButton();});
+$('addVocabulary').addEventListener('click',()=>{
+  if(!translationResult)return;
+  if(!vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult))) {
+    const entry={...translationResult};
+    if(translationAnchor?.source==='passage') {
+      const text=$('readingText').textContent;
+      const selected=text.slice(translationAnchor.start,translationAnchor.end);
+      entry.passageStart=translationAnchor.start+(selected.length-selected.trimStart().length);
+      entry.passageEnd=entry.passageStart+selected.trim().length;
+    }
+    vocabulary.push(entry);
+  }
+  renderVocabulary();renderPassage();updateVocabularyButton();queueTranslationPosition();
+});
 $('closeTranslation').addEventListener('click',()=>{$('translationPanel').hidden=true;});
 
 // Keep the dictionary outside the scrolling reading pane so it cannot be clipped by it.

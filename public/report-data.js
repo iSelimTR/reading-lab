@@ -1,3 +1,4 @@
+import { vocabularyMarkers } from './vocabulary.js';
 // Normalize for evidence matching while retaining UTF-16 offsets into the original PDF text.
 export function normalizedIndex(source) {
   const omitted = new Set();
@@ -38,19 +39,22 @@ export function buildReviewData({title, passage, questions, answers, annotations
   });
   const correct = items.filter(item=>item.correct).length;
   return {title:String(title || '阅读练习'), passage, items, correct, total:items.length,
-    date:new Date(date).toLocaleString('zh-CN'), vocabulary:Array.isArray(vocabulary)?vocabulary.filter(entry=>entry&&['term','context','generalMeaning','contextualMeaning','contextTranslation'].every(field=>typeof entry[field]==='string'&&entry[field].length<=2000)).map(entry=>({term:entry.term,context:entry.context,generalMeaning:entry.generalMeaning,contextualMeaning:entry.contextualMeaning,contextTranslation:entry.contextTranslation,lemma:String(entry.lemma||''),partOfSpeech:String(entry.partOfSpeech||'')})):[], annotations:annotations.filter(note=>Number.isInteger(note.start)&&Number.isInteger(note.end)&&note.start>=0&&note.end>note.start) };
+    date:new Date(date).toLocaleString('zh-CN'), vocabulary:Array.isArray(vocabulary)?vocabulary.filter(entry=>entry&&['term','context','generalMeaning','contextualMeaning','contextTranslation'].every(field=>typeof entry[field]==='string'&&entry[field].length<=2000)).map(entry=>({term:entry.term,passageStart:entry.passageStart,passageEnd:entry.passageEnd,context:entry.context,generalMeaning:entry.generalMeaning,contextualMeaning:entry.contextualMeaning,contextTranslation:entry.contextTranslation,lemma:String(entry.lemma||''),partOfSpeech:String(entry.partOfSpeech||'')})):[], annotations:annotations.filter(note=>Number.isInteger(note.start)&&Number.isInteger(note.end)&&note.start>=0&&note.end>note.start) };
 }
 
-export function paragraphSegments(passage, items) {
-  let cursor=0;
+export function paragraphSegments(passage, items, vocabulary = []) {
+  let cursor=0, flatOffset=0;
+  const markers=vocabularyMarkers(passage.split(/\n\s*\n/).filter(Boolean).join(''),vocabulary);
   return passage.split(/\n\s*\n/).filter(Boolean).map(text=>{
     const start=passage.indexOf(text,cursor), end=start+text.length;
     cursor=end;
+    const glosses=markers.filter(marker=>marker.end>flatOffset&&marker.end<=flatOffset+text.length).map(marker=>({...marker,end:start+marker.end-flatOffset}));
+    flatOffset+=text.length;
     const relevant=items.filter(item=>item.range && item.range.start<end && item.range.end>start);
-    const breaks=[...new Set([start,end,...relevant.flatMap(item=>[Math.max(start,item.range.start),Math.min(end,item.range.end)])])].sort((a,b)=>a-b);
+    const breaks=[...new Set([start,end,...glosses.map(marker=>marker.end),...relevant.flatMap(item=>[Math.max(start,item.range.start),Math.min(end,item.range.end)])])].sort((a,b)=>a-b);
     return breaks.slice(0,-1).map((from,index)=>{
       const to=breaks[index+1];
-      return {text:passage.slice(from,to),questionNumbers:relevant.filter(item=>item.range.start<to&&item.range.end>from).map(item=>item.number),highlight:relevant.some(item=>item.range.start<to&&item.range.end>from),
+      return {text:passage.slice(from,to),glosses:glosses.filter(marker=>marker.end===to).map(marker=>marker.meaning),questionNumbers:relevant.filter(item=>item.range.start<to&&item.range.end>from).map(item=>item.number),highlight:relevant.some(item=>item.range.start<to&&item.range.end>from),
         references:relevant.filter(item=>item.range.end===to).map(item=>item.number)};
     });
   });

@@ -15,11 +15,12 @@ export function createReviewDocument(input, lib) {
     p('本记录保留本轮原文、作答与解析。原文中每题证据使用不同颜色下划线，右上角数字对应题号。同一句对应多题时采用双下划线，并列出全部题号。红字表示错选，绿字表示正确答案。',{spacing:{after:170}}),
     heading('阅读原文')
   ];
-  for (const segments of paragraphSegments(report.passage,report.items)) {
+  for (const segments of paragraphSegments(report.passage,report.items,report.vocabulary)) {
     const runs=[];
     for (const segment of segments) {
       const lines=segment.text.split('\n');
       lines.forEach((line,index)=>{if(index)runs.push(new TextRun({break:1}));runs.push(run(line,segment.highlight?{underline:{type:segment.questionNumbers.length>1?'double':'single',color:evidenceColor(segment.questionNumbers[0])}}:{}));});
+      for(const meaning of segment.glosses) runs.push(run('（'+meaning+'）',{color:'176C65',size:21}));
       if(segment.references.length) runs.push(run(' ['+segment.references.join(' ')+']',{superScript:true,bold:true,size:20,color:evidenceColor(segment.references[0])}));
     }
     children.push(new Paragraph({children:runs,spacing:{after:180,line:320},widowControl:true}));
