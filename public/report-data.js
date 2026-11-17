@@ -59,3 +59,20 @@ export function paragraphSegments(passage, items, vocabulary = []) {
     });
   });
 }
+
+let lastDownloadTime = 0;
+export function reviewFilename({title,passage}, date = new Date()) {
+  const generic=/^(?:我的阅读练习|阅读练习|阅读练习复盘|reading\s*(?:practice|quiz|exercise|lab))$/i;
+  let label=String(title||'').trim();
+  if(!label||generic.test(label)) {
+    const firstLine=String(passage||'').split(/\r?\n/).map(line=>line.trim()).find(Boolean)||'阅读文章';
+    label=firstLine.split(/\s+/).slice(0,10).join(' ');
+  }
+  label=label.normalize('NFKC').replace(/[<>:"/\\|?*\x00-\x1f\x7f]/g,' ').replace(/\s+/g,' ').trim().slice(0,65).replace(/[ .]+$/,'')||'阅读文章';
+  // Monotonic milliseconds also distinguish repeated clicks within the same millisecond.
+  const time=Math.max(date.getTime(),lastDownloadTime+1);
+  lastDownloadTime=time;
+  const d=new Date(time), pad=(value,length=2)=>String(value).padStart(length,'0');
+  const stamp=d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds())+'_'+pad(d.getMilliseconds(),3);
+  return label+'_复盘_'+stamp+'.docx';
+}

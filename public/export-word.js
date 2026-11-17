@@ -1,4 +1,4 @@
-import { buildReviewData, paragraphSegments } from './report-data.js';
+import { buildReviewData, paragraphSegments, reviewFilename } from './report-data.js';
 import {evidenceColor} from './vocabulary.js';
 
 const LETTERS = ['A','B','C','D'];
@@ -71,10 +71,8 @@ export function createReviewDocument(input, lib) {
 export async function downloadReviewWord(input) {
   const lib=await import('./vendor/docx/index.mjs?version=2');
   const blob=await lib.Packer.toBlob(createReviewDocument(input,lib));
-  const date=new Date().toLocaleDateString('en-CA');
-  const title=String(input.title||'阅读练习').replace(/[<>:"/\\|?*\x00-\x1f]/g,'').slice(0,55)||'阅读练习';
   const url=URL.createObjectURL(blob);
-  const anchor=document.createElement('a');anchor.href=url;anchor.download=`${title}_复盘_${date}.docx`;
+  const anchor=document.createElement('a');anchor.href=url;anchor.download=reviewFilename(input);
   document.body.append(anchor);anchor.click();anchor.remove();
   return {url,filename:anchor.download};
 }
