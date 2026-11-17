@@ -51,7 +51,7 @@ OPENAI_MODEL=gpt-4.1-mini
 OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
-重启 `npm start`，网页的 AI 选项会自动启用。接口使用 Chat Completions 的严格 JSON Schema。兼容服务需要支持 `response_format.type=json_schema` 和配置的模型。
+重启 `npm start`，网页的 AI 选项会自动启用。OpenAI 默认使用 Chat Completions 的严格 JSON Schema；DeepSeek 官方接口自动使用 JSON Object 模式，并保留本地题目结构和原文依据校验。其他兼容服务可设置 `AI_RESPONSE_FORMAT=json_object`，需支持配置的模型。
 
 API 使用可能计费，按所用服务的价格计算。密钥只保留在服务器 `.env`，该文件已经在 `.gitignore` 中排除。GitHub Actions Secrets 不会使纯静态 GitHub Pages 具备服务端 AI 能力。
 
@@ -64,6 +64,21 @@ APP_PASSWORD=设置一个自己的访问密码
 ```
 
 浏览器会弹出密码框，用户名可任意填写，密码使用 `APP_PASSWORD`。如果部署到公网，应使用提供 HTTPS 的 Node 托管服务，并配置相同环境变量。配置 API Key 后，对外监听必须同时设置站点密码。服务端不提供公开文件上传接口，只有用户确认后的文章正文会发送给 AI。
+
+## 接入 DeepSeek
+
+在本地项目的 .env 文件填写以下配置（不要上传密钥）：
+
+```dotenv
+OPENAI_API_KEY=你的DeepSeek密钥
+OPENAI_BASE_URL=https://api.deepseek.com
+OPENAI_MODEL=deepseek-flash
+AI_RESPONSE_FORMAT=json_object
+```
+
+变量沿用 OPENAI_ 名称，但请求发送到 DeepSeek。修改后关闭原启动窗口，重新双击 start-local.cmd，并刷新网页选择 AI 模式。出题时文章正文会发送给 DeepSeek 并消耗 API 余额；PDF 提取和基础模式不调用付费模型。为控制等待时间和输出长度，DeepSeek 请求关闭思考模式并限制输出；不自动重试付费请求。建议先用演示文章生成三题。
+
+参考：https://api-docs.deepseek.com/zh-cn/guides/json_mode/
 
 ## 两种模式的范围
 

@@ -73,3 +73,40 @@ test('configured site password protects both the interface and API', async () =>
     assert.equal(response.status, 200);
   });
 });
+
+test('DeepSeek uses JSON object mode and keeps key on server', async () => {
+  let sent;
+  const fetcher = async (url, options) => {
+    sent = { url, options, body: JSON.parse(options.body) };
+    return Response.json({ choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(generateBasicQuiz(DEMO_TEXT, 3)) } }] });
+  };
+  await withApp({ env: { OPENAI_API_KEY: 'deepseek-test-secret', OPENAI_BASE_URL: 'https://api.deepseek.com' }, fetcher }, async base => {
+    const response = await post(base, { text: DEMO_TEXT, count: 3, difficulty: 'standard' });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).questions.length, 3);
+    assert.equal(sent.url, 'https://api.deepseek.com/chat/completions');
+    assert.deepEqual(sent.body.response_format, { type: 'json_object' });
+    assert.equal(sent.body.model, 'deepseek-flash');
+    assert.deepEqual(sent.body.thinking, { type: 'disabled' });
+    assert.equal(sent.body.max_tokens, 8000);
+    assert.match(sent.body.messages[0].content, /"answerIndex":0/);
+    assert.equal(sent.options.headers.Authorization, 'Bearer deepseek-test-secret');
+    assert.ok(!(await (await fetch(`${base}/api/config`)).text()).includes('deepseek-test-secret'));
+  });
+});
+
+test('provider empty output, truncation and low balance fail without automatic charged retries', async () => {
+  for (const scenario of [
+    { response: () => Response.json({ choices: [{ message: { content: '  ' } }] }), pattern: /空内容/ },
+    { response: () => Response.json({ choices: [{ finish_reason: 'length', message: { content: '{}' } }] }), pattern: /长度限制/ },
+    { response: () => new Response('private diagnostics', { status: 402 }), pattern: /余额不足/ }
+  ]) {
+    let calls = 0;
+    await withApp({ env: { OPENAI_API_KEY: 'secret', OPENAI_BASE_URL: 'https://api.deepseek.com' }, fetcher: async () => { calls++; return scenario.response(); } }, async base => {
+      const response = await post(base, { text: DEMO_TEXT, count: 3, difficulty: 'standard' });
+      assert.equal(response.status, 400);
+      assert.match((await response.json()).error, scenario.pattern);
+      assert.equal(calls, 1);
+    });
+  }
+});
