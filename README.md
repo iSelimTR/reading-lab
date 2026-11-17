@@ -14,6 +14,10 @@
 
 ## 本地启动
 
+Windows 用户安装 Node.js 22 或更高版本后，在项目文件夹打开 PowerShell，首次执行 `npm.cmd install` 安装依赖。以后双击 `start-local.cmd` 即可启动，再打开终端显示的网址。使用时保持启动窗口打开，按 `Ctrl+C` 结束。
+
+启动文件会自动查找 Node.js，不依赖某台电脑的用户名或 Codex 安装版本。也支持在本机的 `.runtime/node.exe` 放置 Node.js 22 或更高版本的可执行文件；该目录不会上传 GitHub。移动项目时请整体移动文件夹，包括 `node_modules` 和本地 `.env`（如果有），然后从新位置启动。
+
 安装 Node.js 22 或更高版本，在这个项目目录打开终端。
 
 ```bash
