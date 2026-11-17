@@ -436,7 +436,7 @@ function renderVocabulary() {
   }));
 }
 function updateVocabularyButton(){const added=translationResult&&vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult));$('addVocabulary').disabled=!translationResult||added;$('addVocabulary').textContent=added?'已加入本篇生词':'加入本篇生词';}
-function showTranslation(result){queueTranslationPosition();translationResult=result;$('translationContent').hidden=false;$('translatedTerm').textContent=result.term;$('generalMeaning').textContent=result.generalMeaning;$('contextualMeaning').textContent=result.contextualMeaning;$('translationGrammar').textContent=result.lemma+' · '+result.partOfSpeech;$('translationContext').textContent=result.context;$('contextTranslation').textContent=result.contextTranslation;updateVocabularyButton();}
+function showTranslation(result){queueTranslationPosition();translationResult=result;$('translationContent').hidden=false;$('translatedTerm').textContent=result.term;$('generalMeaning').textContent=result.generalMeaning;$('contextualMeaning').textContent=result.contextualMeaning;$('translationGrammar').textContent=result.lemma+' · '+result.partOfSpeech;$('translationContext').textContent=result.context;$('contextTranslation').textContent=result.contextTranslation;if(translationAnchor?.source==='passage')saveTranslatedVocabulary();else updateVocabularyButton();}
 $('translateSelection').addEventListener('click',async()=>{
   if(!pendingSelection||translationBusy)return;
   let lookup;try{lookup=pendingSelection.lookup||selectionContext($('readingText').textContent,pendingSelection.start,pendingSelection.end);if(lookup.term.length>200)throw Error('一次请选择 200 字符以内的单词或短语。');}catch(error){return tell(error.message,true);}
@@ -458,7 +458,7 @@ $('translateSelection').addEventListener('click',async()=>{
   }catch(error){if(version===translationVersion)$('translationStatus').textContent=error.message;}
   finally{if(version===translationVersion){translationBusy=false;renderAnnotationControls();}}
 });
-$('addVocabulary').addEventListener('click',()=>{
+function saveTranslatedVocabulary(){
   if(!translationResult)return;
   if(!vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult))) {
     const entry={...translationResult};
@@ -471,7 +471,8 @@ $('addVocabulary').addEventListener('click',()=>{
     vocabulary.push(entry);
   }
   renderVocabulary();renderPassage();updateVocabularyButton();queueTranslationPosition();
-});
+}
+$('addVocabulary').addEventListener('click',saveTranslatedVocabulary);
 $('closeTranslation').addEventListener('click',()=>{$('translationPanel').hidden=true;});
 
 // Keep the dictionary outside the scrolling reading pane so it cannot be clipped by it.
