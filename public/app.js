@@ -1,6 +1,7 @@
 import { generateBasicQuiz, gradeQuiz, DEMO_TEXT } from './src/questions.js';
 import { openPDF, extractPDF } from './pdf.js';
 import { selectionContext, vocabularyIdentity } from './vocabulary.js';
+import {floatingPosition} from './floating-position.js';
 
 const $ = id => document.getElementById(id);
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -17,6 +18,8 @@ let generationPassage = '';
 let annotations = [];
 let vocabulary = [];
 let translationResult = null;
+let translationAnchor = null;
+let translationFrame = null;
 let translationBusy = false;
 let translationVersion = 0;
 const translationCache = new Map();
@@ -264,6 +267,7 @@ $('retryWrong').addEventListener('click', () => {
 });
 $('retryAll').addEventListener('click', () => { startAttempt(allQuestions); tell('已重置本篇的全部题目。'); $('practice').scrollIntoView({ behavior: 'smooth' }); });
 $('edit').addEventListener('click', () => {
+  $('translationPanel').hidden = true;
   $('setup').hidden = false; $('practice').hidden = true;
   $('step1').classList.add('active'); $('step2').classList.remove('active'); $('step3').classList.remove('active');
   tell(); $('setup').scrollIntoView({ behavior: 'smooth' });
@@ -425,12 +429,13 @@ function renderVocabulary() {
   }));
 }
 function updateVocabularyButton(){const added=translationResult&&vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult));$('addVocabulary').disabled=!translationResult||added;$('addVocabulary').textContent=added?'已加入本篇生词':'加入本篇生词';}
-function showTranslation(result){translationResult=result;$('translationContent').hidden=false;$('translatedTerm').textContent=result.term;$('generalMeaning').textContent=result.generalMeaning;$('contextualMeaning').textContent=result.contextualMeaning;$('translationGrammar').textContent=result.lemma+' · '+result.partOfSpeech;$('translationContext').textContent=result.context;$('contextTranslation').textContent=result.contextTranslation;updateVocabularyButton();}
+function showTranslation(result){queueTranslationPosition();translationResult=result;$('translationContent').hidden=false;$('translatedTerm').textContent=result.term;$('generalMeaning').textContent=result.generalMeaning;$('contextualMeaning').textContent=result.contextualMeaning;$('translationGrammar').textContent=result.lemma+' · '+result.partOfSpeech;$('translationContext').textContent=result.context;$('contextTranslation').textContent=result.contextTranslation;updateVocabularyButton();}
 $('translateSelection').addEventListener('click',async()=>{
   if(!pendingSelection||translationBusy)return;
   let lookup;try{lookup=pendingSelection.lookup||selectionContext($('readingText').textContent,pendingSelection.start,pendingSelection.end);if(lookup.term.length>200)throw Error('一次请选择 200 字符以内的单词或短语。');}catch(error){return tell(error.message,true);}
+  captureTranslationAnchor();
   const version=translationVersion;
-  $('translationPanel').hidden=false;$('translationContent').hidden=true;$('translatedTerm').textContent=lookup.term;$('translationStatus').textContent='正在查询常见词义与语境词义…';translationResult=null;
+  $('translationPanel').hidden=false;$('translationContent').hidden=true;$('translatedTerm').textContent=lookup.term;$('translationStatus').textContent='正在查询常见词义与语境词义…';translationResult=null;queueTranslationPosition();
   const cacheKey=vocabularyIdentity(lookup);
   if(translationCache.has(cacheKey)){showTranslation(translationCache.get(cacheKey));$('translationStatus').textContent='已使用本页查询记录，未再次调用 AI。';return;}
   if(!backendAvailable||(!serverDeepSeekKey&&!$('deepseekKey').value.trim())){$('translationStatus').textContent='请先在文章设置的 DeepSeek 设置中填写密钥。基础出题模式也可以使用翻译。';return;}
@@ -448,3 +453,46 @@ $('translateSelection').addEventListener('click',async()=>{
 });
 $('addVocabulary').addEventListener('click',()=>{if(!translationResult)return;if(!vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult)))vocabulary.push({...translationResult});renderVocabulary();updateVocabularyButton();});
 $('closeTranslation').addEventListener('click',()=>{$('translationPanel').hidden=true;});
+
+// Keep the dictionary outside the scrolling reading pane so it cannot be clipped by it.
+document.body.append($('translationPanel'));
+$('translationPanel').setAttribute('role','dialog');
+$('translationPanel').setAttribute('aria-modal','false');
+function captureTranslationAnchor(){
+  const selection=window.getSelection();
+  if(selection?.rangeCount){
+    const range=selection.getRangeAt(0).cloneRange();
+    translationAnchor={range,rect:range.getBoundingClientRect(),source:pendingSelection?.source,start:pendingSelection?.start,end:pendingSelection?.end};
+  }
+}
+function restoreTranslationRange(){
+  if(!translationAnchor||translationAnchor.source!=='passage')return;
+  const walker=document.createTreeWalker($('readingText'),NodeFilter.SHOW_TEXT);
+  const range=document.createRange();let offset=0,node,startFound=false;
+  while((node=walker.nextNode())){
+    const end=offset+node.textContent.length;
+    if(!startFound&&translationAnchor.start>=offset&&translationAnchor.start<end){range.setStart(node,translationAnchor.start-offset);startFound=true;}
+    if(startFound&&translationAnchor.end<=end){range.setEnd(node,translationAnchor.end-offset);translationAnchor.range=range;return;}
+    offset=end;
+  }
+}
+function queueTranslationPosition(){
+  if(translationFrame!==null)return;
+  translationFrame=requestAnimationFrame(()=>{translationFrame=null;positionTranslationPanel();});
+}
+function positionTranslationPanel(){
+  const panel=$('translationPanel');if(panel.hidden||!translationAnchor)return;
+  if(!translationAnchor.range.startContainer.isConnected)restoreTranslationRange();
+  if(translationAnchor.range.startContainer.isConnected){
+    const rectangle=translationAnchor.range.getBoundingClientRect();
+    if(rectangle.width||rectangle.height)translationAnchor.rect=rectangle;
+  }
+  const width=Math.min(360,window.innerWidth-24);
+  panel.style.width=width+'px';panel.style.maxHeight=Math.max(1,window.innerHeight-24)+'px';
+  const placement=floatingPosition(translationAnchor.rect,{width,height:panel.getBoundingClientRect().height},{width:window.innerWidth,height:window.innerHeight});
+  panel.style.left=placement.left+'px';panel.style.top=placement.top+'px';
+}
+window.addEventListener('scroll',event=>{if(!$('translationPanel').contains(event.target))queueTranslationPosition();},true);
+window.addEventListener('resize',queueTranslationPosition);
+document.addEventListener('keydown',event=>{if(event.key==='Escape')$('translationPanel').hidden=true;});
+new ResizeObserver(queueTranslationPosition).observe($('translationPanel'));
