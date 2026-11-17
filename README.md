@@ -14,7 +14,7 @@
 
 ## 本地启动
 
-Windows 用户安装 Node.js 22 或更高版本后，在项目文件夹打开 PowerShell，首次执行 `npm.cmd install` 安装依赖。以后双击 `start-local.cmd` 即可启动，再打开终端显示的网址。使用时保持启动窗口打开，按 `Ctrl+C` 结束。
+Windows 用户安装 Node.js 22 或更高版本后，在项目文件夹打开 PowerShell，首次执行 `npm.cmd install` 安装依赖。以后双击 `start-local.cmd` 会打开桌面控制台并自动启动服务。点击窗口中的链接或「打开网页」进入练习。点击「停止服务」可停止后台，之后可再次启动；关闭控制窗口也会停止它管理的本项目服务。关闭浏览器标签页不会停止后台。重复双击会提示控制窗口已经打开。
 
 启动文件会自动查找 Node.js，不依赖某台电脑的用户名或 Codex 安装版本。也支持在本机的 `.runtime/node.exe` 放置 Node.js 22 或更高版本的可执行文件；该目录不会上传 GitHub。移动项目时请整体移动文件夹，包括 `node_modules` 和本地 `.env`（如果有），然后从新位置启动。
 
@@ -64,6 +64,8 @@ APP_PASSWORD=设置一个自己的访问密码
 ```
 
 浏览器会弹出密码框，用户名可任意填写，密码使用 `APP_PASSWORD`。如果部署到公网，应使用提供 HTTPS 的 Node 托管服务，并配置相同环境变量。配置 API Key 后，对外监听必须同时设置站点密码。服务端不提供公开文件上传接口，只有用户确认后的文章正文会发送给 AI。
+
+控制台使用 Windows 自带的 PowerShell 和 Windows Forms，无需另装桌面框架。若使用命令行，可运行 `npm start`，结束时按 `Ctrl+C`；也可运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1`。控制台只接管已确认属于当前项目的服务，端口被其他程序使用时会提示，不会关闭其他程序。
 
 ## 阅读与标注
 
