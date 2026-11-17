@@ -12,6 +12,24 @@ let submitted = false;
 let currentQuiz = null;
 let attemptStarted = null;
 let generationPassage = '';
+let backendAvailable = false;
+let serverDeepSeekKey = false;
+
+function selectedModel() { return document.querySelector('input[name="deepseekModel"]:checked').value; }
+function updateAISettings() {
+  const ownKey = Boolean($('deepseekKey').value.trim());
+  $('mode').options[1].disabled = !backendAvailable;
+  $('deepseekKey').disabled = busy || !backendAvailable;
+  $('clearKey').disabled = busy || !ownKey || !backendAvailable;
+  for (const radio of document.querySelectorAll('input[name="deepseekModel"]')) radio.disabled = busy || !backendAvailable;
+  $('modelSummary').textContent = selectedModel() === 'deepseek-flash' ? 'Flash' : 'V4 Pro';
+  $('connectionStatus').textContent = !backendAvailable ? '当前是静态网页。AI 设置需通过本地启动文件或 Node 服务使用。' : 'DeepSeek 官方接口 · 按使用量计费';
+  $('keySource').textContent = !backendAvailable ? '尚未连接出题服务' : ownKey ? '使用当前页面输入的密钥' : serverDeepSeekKey ? '使用本地已配置密钥' : '请在上方填写完整密钥';
+}
+$('deepseekKey').addEventListener('input', updateAISettings);
+$('clearKey').addEventListener('click', () => { $('deepseekKey').value = ''; updateAISettings(); });
+for (const radio of document.querySelectorAll('input[name="deepseekModel"]')) radio.addEventListener('change', updateAISettings);
+window.addEventListener('pageshow', event => { if (event.persisted) { $('deepseekKey').value = ''; updateAISettings(); } });
 
 function tell(message = '', error = false) {
   $('message').hidden = !message;
@@ -23,6 +41,7 @@ function setBusy(value, message = '') {
   busy = value;
   for (const id of ['demo', 'file', 'extract', 'generate', 'passage', 'startPage', 'endPage', 'forceOcr', 'ocrLanguage', 'mode', 'questionCount']) $(id).disabled = value;
   $('difficulty').disabled = value || $('mode').value !== 'ai';
+  updateAISettings();
   if (message) tell(message);
 }
 
@@ -68,6 +87,7 @@ for (const type of ['dragleave', 'drop']) $('dropzone').addEventListener(type, e
 $('dropzone').addEventListener('drop', event => choosePDF(event.dataTransfer.files[0]));
 $('passage').addEventListener('input', countWords);
 $('mode').addEventListener('change', () => {
+  if ($('mode').value === 'ai') $('deepseekSettings').open = true;
   $('difficulty').disabled = $('mode').value !== 'ai';
   $('modeHelp').textContent = $('mode').value === 'ai' ? 'AI 会生成细节、同义替换、推断和主旨选择题，附中文解析与原文依据。' : '基础模式免费使用，根据文章自动生成原文填空题。';
 });
@@ -98,13 +118,19 @@ $('generate').addEventListener('click', async () => {
   const text = $('passage').value.trim();
   if (text.length < 150) return tell('先上传 PDF 或粘贴一段完整的英文文章。', true);
   if (text.length > 30_000) return tell('正文超过 30000 字符，请减少页数或只保留一篇文章。', true);
+  if ($('mode').value === 'ai' && (!backendAvailable || (!serverDeepSeekKey && !$('deepseekKey').value.trim()))) {
+    $('deepseekSettings').open = true;
+    $('deepseekKey').focus();
+    return tell('请先在 DeepSeek 设置中填写完整 API Key。', true);
+  }
   const count = Number($('questionCount').value);
   setBusy(true, '正在为这篇文章生成练习…');
   try {
     let quiz;
     if ($('mode').value === 'ai') {
       const response = await fetch('./api/quiz', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, count, difficulty: $('difficulty').value }) });
+        body: JSON.stringify({ text, count, difficulty: $('difficulty').value, deepseek: { model: selectedModel(), key: $('deepseekKey').value.trim() } }) });
+      if (!response.headers.get('content-type')?.includes('application/json')) throw new Error('AI 需要本地出题服务，请通过 start-local.cmd 启动后访问。');
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'AI 生成失败，请重试。');
       quiz = data;
@@ -113,7 +139,7 @@ $('generate').addEventListener('click', async () => {
     allQuestions = quiz.questions;
     generationPassage = text;
     $('quizTitle').textContent = quiz.title;
-    $('quizMode').textContent = quiz.mode === 'ai' ? 'AI READING · 理解与推断' : 'BASIC READING · 原文填空选择题';
+    $('quizMode').textContent = quiz.mode === 'ai' ? 'DEEPSEEK · ' + (quiz.model === 'deepseek-v4-pro' ? 'V4 PRO' : 'FLASH') + ' · 理解与推断' : 'BASIC READING · 原文填空选择题';
     $('readingText').replaceChildren(...text.split(/\n\s*\n/).filter(Boolean).map(paragraph => element('p', '', paragraph)));
     $('setup').hidden = true;
     $('practice').hidden = false;
@@ -232,9 +258,12 @@ try {
   const response = await fetch('./api/config', { headers: { Accept: 'application/json' } });
   if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
     const config = await response.json();
-    if (config.aiEnabled) {
-      $('mode').options[1].disabled = false;
-      $('mode').options[1].textContent = 'AI 理解题 · 细节 / 推断 / 主旨';
-    }
+    backendAvailable = Boolean(config.deepseekAvailable);
+    serverDeepSeekKey = Boolean(config.deepseekConfigured);
+    const defaultRadio = [...document.querySelectorAll('input[name="deepseekModel"]')].find(radio => radio.value === config.deepseekModel);
+    if (defaultRadio) defaultRadio.checked = true;
   }
 } catch { /* Static GitHub Pages uses the browser-local basic mode. */ }
+
+$('deepseekKey').value = '';
+updateAISettings();

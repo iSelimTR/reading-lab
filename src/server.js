@@ -61,7 +61,7 @@ async function generateAIQuiz({ text, count, difficulty }, env, fetcher) {
   if (!['json_object', 'json_schema'].includes(format)) throw new Error('AI_RESPONSE_FORMAT must be json_object or json_schema.');
   const example = { title: 'Reading practice', questions: [{ type: 'detail', prompt: 'Which statement is supported by the passage?', options: ['A', 'B', 'C', 'D'], answerIndex: 0, explanation: '中文解析与干扰项说明', evidence: 'An exact quote from the passage' }] };
   const response = await fetcher(url, {
-    method: 'POST', signal: AbortSignal.timeout(90_000),
+    method: 'POST', redirect: 'error', signal: AbortSignal.timeout(90_000),
     headers: { Authorization: `Bearer ${env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: env.OPENAI_MODEL || (isDeepSeek ? 'deepseek-flash' : 'gpt-4.1-mini'),
@@ -75,7 +75,7 @@ async function generateAIQuiz({ text, count, difficulty }, env, fetcher) {
   });
   if (!response.ok) {
     await response.body?.cancel();
-    if (response.status === 401) throw new Error('AI 服务鉴权失败，请检查服务器上的 API Key。');
+    if (response.status === 401) throw new Error('AI 服务鉴权失败，请检查 DeepSeek 设置中输入的完整 API Key，或本地配置的密钥。');
     if (response.status === 402) throw new Error('AI 服务余额不足，请在对应服务平台检查充值余额。');
     if (response.status === 429) throw new Error('AI 服务额度不足或请求过快，请稍后重试。');
     throw new Error(`AI 服务返回 ${response.status}，请检查模型和服务地址。`);
@@ -89,6 +89,12 @@ async function generateAIQuiz({ text, count, difficulty }, env, fetcher) {
   try { quiz = JSON.parse(message?.content || ''); }
   catch { throw new Error('AI 返回的数据无法解析，请重新生成。'); }
   return validateQuiz(quiz, text, count);
+}
+
+const DEEPSEEK_MODELS = ['deepseek-flash', 'deepseek-v4-pro'];
+function hasDeepSeekKey(env) {
+  try { return new URL(env.OPENAI_BASE_URL || '').origin === 'https://api.deepseek.com' && Boolean(env.OPENAI_API_KEY); }
+  catch { return false; }
 }
 
 export function createApp({ env = process.env, fetcher = fetch } = {}) {
@@ -106,7 +112,7 @@ export function createApp({ env = process.env, fetcher = fetch } = {}) {
     try { pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname); }
     catch { return sendJson(response, 400, { error: '无效地址。' }); }
     try {
-      if (pathname === '/api/config' && request.method === 'GET') return sendJson(response, 200, { aiEnabled: Boolean(env.OPENAI_API_KEY) });
+      if (pathname === '/api/config' && request.method === 'GET') return sendJson(response, 200, { aiEnabled: Boolean(env.OPENAI_API_KEY), deepseekAvailable: true, deepseekConfigured: hasDeepSeekKey(env), deepseekModel: hasDeepSeekKey(env) && DEEPSEEK_MODELS.includes(env.OPENAI_MODEL) ? env.OPENAI_MODEL : 'deepseek-flash' });
       if (pathname === '/api/quiz' && request.method === 'POST') {
         const origin = request.headers.origin;
         if (origin && new URL(origin).host !== request.headers.host) return sendJson(response, 403, { error: '请从本站页面提交练习。' });
@@ -117,13 +123,27 @@ export function createApp({ env = process.env, fetcher = fetch } = {}) {
             !['accessible', 'standard', 'challenging'].includes(payload.difficulty)) {
           return sendJson(response, 400, { error: '文章应为 150–30000 字符，题数为 3–15，且需选择有效难度。' });
         }
-        if (!env.OPENAI_API_KEY) return sendJson(response, 503, { error: '尚未配置 AI，请选择基础模式或在服务器设置 API Key。' });
+        let requestEnv = env;
+        if (payload.deepseek !== undefined) {
+          const settings = payload.deepseek;
+          if (!settings || typeof settings !== 'object' || Array.isArray(settings) || !DEEPSEEK_MODELS.includes(settings.model) ||
+              (settings.key !== undefined && (typeof settings.key !== 'string' || settings.key.length > 512 || /[^\x21-\x7e]/.test(settings.key)))) {
+            return sendJson(response, 400, { error: '请选择有效的 DeepSeek 模型，并检查密钥是否含空格或多余字符。' });
+          }
+          const key = settings.key || (hasDeepSeekKey(env) ? env.OPENAI_API_KEY : '');
+          if (!key) return sendJson(response, 503, { error: '请在 DeepSeek 设置中填写完整 API Key。' });
+          requestEnv = { ...env, OPENAI_API_KEY: key, OPENAI_BASE_URL: 'https://api.deepseek.com', OPENAI_MODEL: settings.model, AI_RESPONSE_FORMAT: 'json_object' };
+        }
+        if (!requestEnv.OPENAI_API_KEY) return sendJson(response, 503, { error: '尚未配置 AI，请选择基础模式或在服务器设置 API Key。' });
         const address = request.socket.remoteAddress;
         if (inFlight >= 2 || Date.now() - (lastGeneration.get(address) || 0) < 3000) return sendJson(response, 429, { error: '正在生成其他练习，请稍后再试。' });
         if (lastGeneration.size > 1000) lastGeneration.clear();
         lastGeneration.set(address, Date.now());
         inFlight++;
-        try { return sendJson(response, 200, await generateAIQuiz(payload, env, fetcher)); }
+        try {
+          const quiz = await generateAIQuiz(payload, requestEnv, fetcher);
+          return sendJson(response, 200, payload.deepseek ? { ...quiz, model: requestEnv.OPENAI_MODEL } : quiz);
+        }
         finally { inFlight--; }
       }
       if (pathname.startsWith('/api/')) return sendJson(response, 404, { error: '接口不存在。' });

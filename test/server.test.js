@@ -23,7 +23,7 @@ test('serves app assets while keeping server files and credentials inaccessible'
     assert.equal((await fetch(`${base}/.env`)).status, 404);
     assert.equal((await fetch(`${base}/src/server.js`)).status, 404);
     assert.equal((await fetch(`${base}/vendor/pdfjs/build/pdf.mjs`)).status, 200);
-    assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { aiEnabled: false });
+    assert.deepEqual(await (await fetch(`${base}/api/config`)).json(), { aiEnabled: false, deepseekAvailable: true, deepseekConfigured: false, deepseekModel: 'deepseek-flash' });
   });
 });
 
@@ -107,6 +107,58 @@ test('provider empty output, truncation and low balance fail without automatic c
       assert.equal(response.status, 400);
       assert.match((await response.json()).error, scenario.pattern);
       assert.equal(calls, 1);
+    });
+  }
+});
+
+test('page DeepSeek key and selected model override only this request at the fixed official endpoint', async () => {
+  const env = { OPENAI_API_KEY: 'different-provider-key', OPENAI_BASE_URL: 'https://other.example/v1', OPENAI_MODEL: 'other-model' };
+  const original = { ...env };
+  let sent;
+  await withApp({ env, fetcher: async (url, options) => {
+    sent = { url, headers: options.headers, body: JSON.parse(options.body), redirect: options.redirect };
+    return Response.json({ choices: [{ message: { content: JSON.stringify(generateBasicQuiz(DEMO_TEXT, 3)) } }] });
+  } }, async base => {
+    const response = await post(base, { text: DEMO_TEXT, count: 3, difficulty: 'standard', deepseek: { key: 'page-test-secret', model: 'deepseek-v4-pro', baseURL: 'https://untrusted.example' } });
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.equal(JSON.parse(text).model, 'deepseek-v4-pro');
+    assert.ok(!text.includes('page-test-secret'));
+    assert.equal(sent.url, 'https://api.deepseek.com/chat/completions');
+    assert.equal(sent.headers.Authorization, 'Bearer page-test-secret');
+    assert.equal(sent.body.model, 'deepseek-v4-pro');
+    assert.equal(sent.body.response_format.type, 'json_object');
+    assert.equal(sent.redirect, 'error');
+    const config = await (await fetch(`${base}/api/config`)).json();
+    assert.equal(config.deepseekConfigured, false);
+    assert.ok(!JSON.stringify(config).includes('secret'));
+    assert.deepEqual(env, original);
+  });
+});
+
+test('page can supply a key without server credentials or reuse an existing DeepSeek key', async () => {
+  for (const ownKey of [true, false]) {
+    let authorization;
+    const env = ownKey ? {} : { OPENAI_API_KEY: 'configured-test-secret', OPENAI_BASE_URL: 'https://api.deepseek.com', OPENAI_MODEL: 'deepseek-flash' };
+    await withApp({ env, fetcher: async (_url, options) => {
+      authorization = options.headers.Authorization;
+      return Response.json({ choices: [{ message: { content: JSON.stringify(generateBasicQuiz(DEMO_TEXT, 3)) } }] });
+    } }, async base => {
+      const response = await post(base, { text: DEMO_TEXT, count: 3, difficulty: 'standard', deepseek: { model: 'deepseek-flash', key: ownKey ? 'page-test-secret' : '' } });
+      assert.equal(response.status, 200);
+      assert.equal(authorization, `Bearer ${ownKey ? 'page-test-secret' : 'configured-test-secret'}`);
+    });
+  }
+});
+
+test('rejects invalid DeepSeek settings and never sends another provider key to DeepSeek', async () => {
+  for (const settings of [null, [], {model:'unknown'}, {model:'deepseek-flash',key:'bad key'}, {model:'deepseek-flash',key:123}, {model:'deepseek-flash',key:''}]) {
+    let calls = 0;
+    await withApp({ env: { OPENAI_API_KEY: 'other-provider-secret', OPENAI_BASE_URL: 'https://other.example' }, fetcher: async () => { calls++; throw new Error('must not call'); } }, async base => {
+      const response = await post(base, { text: DEMO_TEXT, count: 3, difficulty: 'standard', deepseek: settings });
+      assert.equal(response.status, settings?.key === '' ? 503 : 400);
+      assert.equal(calls, 0);
+      assert.ok(!(await response.text()).includes('other-provider-secret'));
     });
   }
 });
