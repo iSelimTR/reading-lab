@@ -12,6 +12,9 @@ let submitted = false;
 let currentQuiz = null;
 let attemptStarted = null;
 let generationPassage = '';
+let annotations = [];
+let pendingSelection = null;
+let annotationSequence = 0;
 let backendAvailable = false;
 let serverDeepSeekKey = false;
 
@@ -140,7 +143,10 @@ $('generate').addEventListener('click', async () => {
     generationPassage = text;
     $('quizTitle').textContent = quiz.title;
     $('quizMode').textContent = quiz.mode === 'ai' ? 'DEEPSEEK · ' + (quiz.model === 'deepseek-v4-pro' ? 'V4 PRO' : 'FLASH') + ' · 理解与推断' : 'BASIC READING · 原文填空选择题';
-    $('readingText').replaceChildren(...text.split(/\n\s*\n/).filter(Boolean).map(paragraph => element('p', '', paragraph)));
+    annotations = [];
+    pendingSelection = null;
+    renderPassage();
+    renderAnnotationControls();
     $('setup').hidden = true;
     $('practice').hidden = false;
     startAttempt(allQuestions);
@@ -248,7 +254,7 @@ $('edit').addEventListener('click', () => {
 });
 $('export').addEventListener('click', () => {
   const payload = { version: 1, date: new Date().toISOString(), title: currentQuiz.title, mode: currentQuiz.mode,
-    passage: generationPassage, questions, answers, result: gradeQuiz(questions, answers) };
+    passage: generationPassage, annotations, readingFontSize: Number($('readingFontSize').value), questions, answers, result: gradeQuiz(questions, answers) };
   const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = `reading-lab-${new Date().toISOString().slice(0, 10)}.json`; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -267,3 +273,100 @@ try {
 
 $('deepseekKey').value = '';
 updateAISettings();
+
+
+// Annotation offsets refer to readingText.textContent, excluding decorative question badges.
+function renderPassage() {
+  let offset = 0;
+  const paragraphs = generationPassage.split(/\n\s*\n/).filter(Boolean).map(text => {
+    const paragraph = element('p');
+    const start = offset, end = start + text.length;
+    const relevant = annotations.filter(note => note.start < end && note.end > start);
+    const boundaries = [...new Set([start, end, ...relevant.flatMap(note => [Math.max(start, note.start), Math.min(end, note.end)])])].sort((a,b) => a-b);
+    for (let index = 0; index < boundaries.length - 1; index++) {
+      const from = boundaries[index], to = boundaries[index+1];
+      const active = relevant.filter(note => note.start < to && note.end > from);
+      const fragment = text.slice(from-start,to-start);
+      if (!active.length) paragraph.append(document.createTextNode(fragment));
+      else {
+        const span = element('span', active.some(note => note.type === 'question') ? 'user-question' : 'user-highlight', fragment);
+        if (active.some(note => note.type === 'highlight')) span.classList.add('user-highlight');
+        span.title = active.some(note => note.type === 'question') ? '这里有疑问，可在下方“我的标注”中移除' : '我的高亮';
+        paragraph.append(span);
+      }
+    }
+    offset = end;
+    return paragraph;
+  });
+  $('readingText').replaceChildren(...paragraphs);
+}
+
+function renderAnnotationControls() {
+  $('highlightSelection').disabled = $('questionSelection').disabled = !pendingSelection;
+  $('undoAnnotation').disabled = $('clearAnnotations').disabled = !annotations.length;
+  $('selectionHint').textContent = pendingSelection ? '已选中：' + pendingSelection.text.slice(0,75) + (pendingSelection.text.length > 75 ? '…' : '') : '选中原文中的词句，再点“高亮”或“标问号”。手机上可长按选词。';
+  $('annotationNotes').hidden = !annotations.length;
+  $('annotationCount').textContent = annotations.length;
+  const plainText = $('readingText').textContent;
+  $('annotationList').replaceChildren(...annotations.map(note => {
+    const item = element('li');
+    const excerpt = plainText.slice(note.start,note.end);
+    const content = element('span','', (note.type === 'question' ? '？ ' : '▰ ') + excerpt.slice(0,110) + (excerpt.length > 110 ? '…' : ''));
+    const remove = element('button','text-button','移除');
+    remove.type = 'button';
+    remove.setAttribute('aria-label','移除标注：' + excerpt.slice(0,35));
+    remove.addEventListener('click', () => {
+      annotations = annotations.filter(current => current.id !== note.id);
+      pendingSelection = null;
+      renderPassage(); renderAnnotationControls();
+    });
+    item.append(content,remove);
+    return item;
+  }));
+}
+
+document.addEventListener('selectionchange', () => {
+  const selection = window.getSelection();
+  pendingSelection = null;
+  if (selection && !selection.isCollapsed && selection.rangeCount && !$('practice').hidden) {
+    const range = selection.getRangeAt(0);
+    if ($('readingText').contains(range.startContainer) && $('readingText').contains(range.endContainer)) {
+      const prefix = document.createRange();
+      prefix.selectNodeContents($('readingText'));
+      prefix.setEnd(range.startContainer,range.startOffset);
+      const start = prefix.toString().length, text = range.toString();
+      if (text.trim()) pendingSelection = { start, end: start + text.length, text };
+    }
+  }
+  renderAnnotationControls();
+});
+
+function annotate(type) {
+  if (!pendingSelection) return;
+  const {start,end} = pendingSelection;
+  if (!annotations.some(note => note.start === start && note.end === end && note.type === type)) annotations.push({id:++annotationSequence,start,end,type});
+  pendingSelection = null;
+  window.getSelection()?.removeAllRanges();
+  renderPassage(); renderAnnotationControls();
+}
+for (const id of ['highlightSelection','questionSelection']) $(id).addEventListener('pointerdown', event => event.preventDefault());
+$('highlightSelection').addEventListener('click', () => annotate('highlight'));
+$('questionSelection').addEventListener('click', () => annotate('question'));
+$('undoAnnotation').addEventListener('click', () => { annotations.pop(); pendingSelection = null; renderPassage(); renderAnnotationControls(); });
+$('clearAnnotations').addEventListener('click', () => { annotations = []; pendingSelection = null; renderPassage(); renderAnnotationControls(); });
+
+function setReadingFont(size) {
+  const value = Math.max(14,Math.min(28,Number(size) || 16));
+  $('readingFontSize').value = value;
+  $('fontSizeValue').textContent = value + 'px';
+  $('readingText').style.fontSize = value + 'px';
+  $('fontSmaller').disabled = value === 14;
+  $('fontLarger').disabled = value === 28;
+  try { localStorage.setItem('reading-lab-font-size',String(value)); } catch { /* Optional preference storage. */ }
+}
+$('readingFontSize').addEventListener('input',event => setReadingFont(event.target.value));
+$('fontSmaller').addEventListener('click', () => setReadingFont(Number($('readingFontSize').value)-1));
+$('fontLarger').addEventListener('click', () => setReadingFont(Number($('readingFontSize').value)+1));
+let savedFontSize = 16;
+try { savedFontSize = Number(localStorage.getItem('reading-lab-font-size')) || 16; } catch { /* Use default. */ }
+setReadingFont(savedFontSize);
