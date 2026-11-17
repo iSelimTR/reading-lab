@@ -17,3 +17,7 @@
 .reading-tools{position:sticky;top:0;z-index:1}
 
 .export-status{flex-basis:100%;margin:0;font-size:12px;color:var(--green)}.export-status.error{color:var(--wrong)}#exportDownloadLink{flex-basis:100%;width:fit-content;font-weight:600;text-decoration:underline}
+
+.translation-panel{border:1px solid #b6cfbf;background:#f5faf4;border-radius:9px;padding:14px;margin:0 0 18px;font-family:system-ui;font-size:12px;line-height:1.8}.translation-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.translation-heading strong{font-size:17px;overflow-wrap:anywhere}.translation-panel p{margin:8px 0}.translation-panel p>b{display:block;color:var(--green);font-size:11px}.translation-panel p>span{display:block;white-space:pre-wrap;overflow-wrap:anywhere}.translation-panel summary{cursor:pointer;color:var(--green)}.translation-panel .secondary-button{margin-top:12px}.translation-panel details p{font-size:11px;overflow-wrap:anywhere}
+
+.translation-panel{scroll-margin-top:160px}

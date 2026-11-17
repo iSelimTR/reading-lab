@@ -24,7 +24,7 @@ export function normalizedIndex(source) {
   return {text, starts, ends};
 }
 
-export function buildReviewData({title, passage, questions, answers, annotations = [], date = new Date()}) {
+export function buildReviewData({title, passage, questions, answers, annotations = [], date = new Date(), vocabulary = []}) {
   if (typeof passage !== 'string' || !Array.isArray(questions) || !questions.length) throw new Error('没有可导出的练习。');
   const source = normalizedIndex(passage);
   const items = questions.map((question,index) => {
@@ -38,7 +38,7 @@ export function buildReviewData({title, passage, questions, answers, annotations
   });
   const correct = items.filter(item=>item.correct).length;
   return {title:String(title || '阅读练习'), passage, items, correct, total:items.length,
-    date:new Date(date).toLocaleString('zh-CN'), annotations:annotations.filter(note=>Number.isInteger(note.start)&&Number.isInteger(note.end)&&note.start>=0&&note.end>note.start) };
+    date:new Date(date).toLocaleString('zh-CN'), vocabulary:Array.isArray(vocabulary)?vocabulary.filter(entry=>entry&&['term','context','generalMeaning','contextualMeaning','contextTranslation'].every(field=>typeof entry[field]==='string'&&entry[field].length<=2000)).map(entry=>({term:entry.term,context:entry.context,generalMeaning:entry.generalMeaning,contextualMeaning:entry.contextualMeaning,contextTranslation:entry.contextTranslation,lemma:String(entry.lemma||''),partOfSpeech:String(entry.partOfSpeech||'')})):[], annotations:annotations.filter(note=>Number.isInteger(note.start)&&Number.isInteger(note.end)&&note.start>=0&&note.end>note.start) };
 }
 
 export function paragraphSegments(passage, items) {
@@ -50,7 +50,7 @@ export function paragraphSegments(passage, items) {
     const breaks=[...new Set([start,end,...relevant.flatMap(item=>[Math.max(start,item.range.start),Math.min(end,item.range.end)])])].sort((a,b)=>a-b);
     return breaks.slice(0,-1).map((from,index)=>{
       const to=breaks[index+1];
-      return {text:passage.slice(from,to),highlight:relevant.some(item=>item.range.start<to&&item.range.end>from),
+      return {text:passage.slice(from,to),questionNumbers:relevant.filter(item=>item.range.start<to&&item.range.end>from).map(item=>item.number),highlight:relevant.some(item=>item.range.start<to&&item.range.end>from),
         references:relevant.filter(item=>item.range.end===to).map(item=>item.number)};
     });
   });

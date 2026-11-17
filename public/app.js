@@ -1,5 +1,6 @@
 import { generateBasicQuiz, gradeQuiz, DEMO_TEXT } from './src/questions.js';
 import { openPDF, extractPDF } from './pdf.js';
+import { selectionContext, vocabularyIdentity } from './vocabulary.js';
 
 const $ = id => document.getElementById(id);
 const LETTERS = ['A', 'B', 'C', 'D'];
@@ -14,6 +15,11 @@ let exportDownloadURL = null;
 let attemptStarted = null;
 let generationPassage = '';
 let annotations = [];
+let vocabulary = [];
+let translationResult = null;
+let translationBusy = false;
+let translationVersion = 0;
+const translationCache = new Map();
 let pendingSelection = null;
 let annotationSequence = 0;
 let backendAvailable = false;
@@ -145,6 +151,12 @@ $('generate').addEventListener('click', async () => {
     $('quizTitle').textContent = quiz.title;
     $('quizMode').textContent = quiz.mode === 'ai' ? 'DEEPSEEK · ' + (quiz.model === 'deepseek-v4-pro' ? 'V4 PRO' : 'FLASH') + ' · 理解与推断' : 'BASIC READING · 原文填空选择题';
     annotations = [];
+    vocabulary = [];
+    translationResult = null;
+    translationVersion++;
+    translationBusy = false;
+    $('translationPanel').hidden = true;
+    renderVocabulary();
     pendingSelection = null;
     renderPassage();
     renderAnnotationControls();
@@ -266,7 +278,7 @@ $('export').addEventListener('click', async () => {
   $('exportDownloadLink').hidden = true;
   try {
     const { downloadReviewWord } = await import('./export-word.js?version=2');
-    const download = await downloadReviewWord({title:currentQuiz.title, passage:generationPassage, questions:[...questions], answers:{...answers}, annotations:annotations.map(note=>({...note}))});
+    const download = await downloadReviewWord({title:currentQuiz.title, passage:generationPassage, questions:[...questions], answers:{...answers}, annotations:annotations.map(note=>({...note})), vocabulary:vocabulary.map(entry=>({...entry}))});
     if(exportDownloadURL) URL.revokeObjectURL(exportDownloadURL);
     exportDownloadURL = download.url;
     $('exportDownloadLink').href = download.url;
@@ -324,9 +336,10 @@ function renderPassage() {
 }
 
 function renderAnnotationControls() {
-  $('highlightSelection').disabled = $('questionSelection').disabled = !pendingSelection;
+  $('highlightSelection').disabled = $('questionSelection').disabled = !pendingSelection || pendingSelection.source === 'option';
+  $('translateSelection').disabled = !pendingSelection || translationBusy;
   $('undoAnnotation').disabled = $('clearAnnotations').disabled = !annotations.length;
-  $('selectionHint').textContent = pendingSelection ? '已选中：' + pendingSelection.text.slice(0,75) + (pendingSelection.text.length > 75 ? '…' : '') : '选中原文中的词句，再点“高亮”或“标问号”。手机上可长按选词。';
+  $('selectionHint').textContent = pendingSelection ? '已选中：' + pendingSelection.text.slice(0,75) + (pendingSelection.text.length > 75 ? '…' : '') : '选中原文可高亮、标问号或翻译；选中选项文字也可翻译。';
   $('annotationNotes').hidden = !annotations.length;
   $('annotationCount').textContent = annotations.length;
   const plainText = $('readingText').textContent;
@@ -357,7 +370,15 @@ document.addEventListener('selectionchange', () => {
       prefix.selectNodeContents($('readingText'));
       prefix.setEnd(range.startContainer,range.startOffset);
       const start = prefix.toString().length, text = range.toString();
-      if (text.trim()) pendingSelection = { start, end: start + text.length, text };
+      if (text.trim()) pendingSelection = { start, end: start + text.length, text, source:'passage' };
+    } else {
+      const begin=range.startContainer.nodeType===Node.ELEMENT_NODE?range.startContainer:range.startContainer.parentElement;
+      const option=begin.closest?.('.option');
+      if(option&&$('questions').contains(option)&&option.lastElementChild.contains(range.startContainer)&&option.lastElementChild.contains(range.endContainer)){
+        const term=range.toString().trim(),optionText=option.lastElementChild.textContent;
+        const prompt=option.closest('.question-card').querySelector('.question-prompt').textContent;
+        if(term)pendingSelection={text:term,source:'option',lookup:{term,context:optionText+' Question: '+prompt.slice(0,Math.max(0,1850-optionText.length))}};
+      }
     }
   }
   renderAnnotationControls();
@@ -371,7 +392,7 @@ function annotate(type) {
   window.getSelection()?.removeAllRanges();
   renderPassage(); renderAnnotationControls();
 }
-for (const id of ['highlightSelection','questionSelection']) $(id).addEventListener('pointerdown', event => event.preventDefault());
+for (const id of ['highlightSelection','questionSelection','translateSelection']) $(id).addEventListener('pointerdown', event => event.preventDefault());
 $('highlightSelection').addEventListener('click', () => annotate('highlight'));
 $('questionSelection').addEventListener('click', () => annotate('question'));
 $('undoAnnotation').addEventListener('click', () => { annotations.pop(); pendingSelection = null; renderPassage(); renderAnnotationControls(); });
@@ -392,3 +413,38 @@ $('fontLarger').addEventListener('click', () => setReadingFont(Number($('reading
 let savedFontSize = 16;
 try { savedFontSize = Number(localStorage.getItem('reading-lab-font-size')) || 16; } catch { /* Use default. */ }
 setReadingFont(savedFontSize);
+
+function renderVocabulary() {
+  $('vocabularyNotes').hidden = !vocabulary.length;
+  $('vocabularyCount').textContent = vocabulary.length;
+  $('vocabularyList').replaceChildren(...vocabulary.map(entry=>{
+    const row=element('li'),text=element('span');text.append(element('strong','',entry.term),element('br'),document.createTextNode(entry.contextualMeaning));
+    const remove=element('button','text-button','移除');remove.type='button';remove.setAttribute('aria-label','移除生词 '+entry.term);
+    remove.addEventListener('click',()=>{vocabulary=vocabulary.filter(item=>vocabularyIdentity(item)!==vocabularyIdentity(entry));renderVocabulary();updateVocabularyButton();});
+    row.append(text,remove);return row;
+  }));
+}
+function updateVocabularyButton(){const added=translationResult&&vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult));$('addVocabulary').disabled=!translationResult||added;$('addVocabulary').textContent=added?'已加入本篇生词':'加入本篇生词';}
+function showTranslation(result){translationResult=result;$('translationContent').hidden=false;$('translatedTerm').textContent=result.term;$('generalMeaning').textContent=result.generalMeaning;$('contextualMeaning').textContent=result.contextualMeaning;$('translationGrammar').textContent=result.lemma+' · '+result.partOfSpeech;$('translationContext').textContent=result.context;$('contextTranslation').textContent=result.contextTranslation;updateVocabularyButton();}
+$('translateSelection').addEventListener('click',async()=>{
+  if(!pendingSelection||translationBusy)return;
+  let lookup;try{lookup=pendingSelection.lookup||selectionContext($('readingText').textContent,pendingSelection.start,pendingSelection.end);if(lookup.term.length>200)throw Error('一次请选择 200 字符以内的单词或短语。');}catch(error){return tell(error.message,true);}
+  const version=translationVersion;
+  $('translationPanel').hidden=false;$('translationContent').hidden=true;$('translatedTerm').textContent=lookup.term;$('translationStatus').textContent='正在查询常见词义与语境词义…';translationResult=null;
+  const cacheKey=vocabularyIdentity(lookup);
+  if(translationCache.has(cacheKey)){showTranslation(translationCache.get(cacheKey));$('translationStatus').textContent='已使用本页查询记录，未再次调用 AI。';return;}
+  if(!backendAvailable||(!serverDeepSeekKey&&!$('deepseekKey').value.trim())){$('translationStatus').textContent='请先在文章设置的 DeepSeek 设置中填写密钥。基础出题模式也可以使用翻译。';return;}
+  translationBusy=true;renderAnnotationControls();
+  try{
+    const response=await fetch('./api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...lookup,deepseek:{model:selectedModel(),key:$('deepseekKey').value.trim()}})});
+    if(!response.headers.get('content-type')?.includes('application/json'))throw Error('翻译接口未就绪，请重启控制台中的服务。');
+    if(response.status===404)throw Error('翻译功能刚更新，请在控制台停止服务后再启动，然后刷新网页。');
+    const result=await response.json();if(!response.ok)throw Error(result.error||'翻译失败，请稍后重试。');
+    if(version!==translationVersion)return;
+    translationCache.set(cacheKey,result);if(translationCache.size>200)translationCache.delete(translationCache.keys().next().value);
+    showTranslation(result);$('translationStatus').textContent='AI 词义仅供辅助理解，可结合原句核对。';
+  }catch(error){if(version===translationVersion)$('translationStatus').textContent=error.message;}
+  finally{if(version===translationVersion){translationBusy=false;renderAnnotationControls();}}
+});
+$('addVocabulary').addEventListener('click',()=>{if(!translationResult)return;if(!vocabulary.some(item=>vocabularyIdentity(item)===vocabularyIdentity(translationResult)))vocabulary.push({...translationResult});renderVocabulary();updateVocabularyButton();});
+$('closeTranslation').addEventListener('click',()=>{$('translationPanel').hidden=true;});

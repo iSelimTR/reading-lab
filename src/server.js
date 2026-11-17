@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {translateSelection} from './translation.js';
 import {prepareExportAssets} from '../scripts/prepare-assets.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
@@ -114,6 +115,22 @@ export function createApp({ env = process.env, fetcher = fetch } = {}) {
     catch { return sendJson(response, 400, { error: '无效地址。' }); }
     try {
       if (pathname === '/api/config' && request.method === 'GET') return sendJson(response, 200, { aiEnabled: Boolean(env.OPENAI_API_KEY), deepseekAvailable: true, deepseekConfigured: hasDeepSeekKey(env), deepseekModel: hasDeepSeekKey(env) && DEEPSEEK_MODELS.includes(env.OPENAI_MODEL) ? env.OPENAI_MODEL : 'deepseek-flash' });
+      if (pathname === '/api/translate' && request.method === 'POST') {
+        const origin=request.headers.origin;
+        if(origin && new URL(origin).host!==request.headers.host)return sendJson(response,403,{error:'请从本站页面提交翻译。'});
+        if(!String(request.headers['content-type']).startsWith('application/json'))return sendJson(response,415,{error:'需要 JSON 请求。'});
+        const payload=await readJson(request);
+        if(typeof payload.term!=='string'||!payload.term.trim()||payload.term.length>200||typeof payload.context!=='string'||payload.context.length>2000||!payload.context.toLowerCase().includes(payload.term.trim().toLowerCase()))return sendJson(response,400,{error:'请选择原文中的单词或短语，选词必须包含在上下文中。'});
+        const settings=payload.deepseek||{model:'deepseek-flash'};
+        if(typeof settings!=='object'||Array.isArray(settings)||!DEEPSEEK_MODELS.includes(settings.model)||(settings.key!==undefined&&(typeof settings.key!=='string'||settings.key.length>512||/[^\x21-\x7e]/.test(settings.key))))return sendJson(response,400,{error:'DeepSeek 模型或密钥格式不正确。'});
+        const key=settings.key||(hasDeepSeekKey(env)?env.OPENAI_API_KEY:'');
+        if(!key)return sendJson(response,503,{error:'翻译需要 DeepSeek 密钥，请在文章设置中填写。'});
+        const address=request.socket.remoteAddress;
+        if(inFlight>=2||Date.now()-(lastGeneration.get(address)||0)<1500)return sendJson(response,429,{error:'操作较快，请稍后再翻译。'});
+        if(lastGeneration.size>1000)lastGeneration.clear();lastGeneration.set(address,Date.now());inFlight++;
+        try{return sendJson(response,200,await translateSelection({term:payload.term.trim(),context:payload.context}, {OPENAI_API_KEY:key,OPENAI_MODEL:settings.model},fetcher));}
+        finally{inFlight--;}
+      }
       if (pathname === '/api/quiz' && request.method === 'POST') {
         const origin = request.headers.origin;
         if (origin && new URL(origin).host !== request.headers.host) return sendJson(response, 403, { error: '请从本站页面提交练习。' });
