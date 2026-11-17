@@ -19,3 +19,10 @@ test('old records require unambiguous context and do not annotate all repeated w
  assert.deepEqual(vocabularyMarkers('Trees help.Trees help.',[{...entry,context:'Trees help.',passageStart:undefined}]),[]);
  assert.deepEqual(vocabularyMarkers('Other passage.',[entry]),[]);
 });
+
+test('inline meanings omit reasons and prefer a dedicated contextual translation',async()=>{
+ const {conciseMeaning}=await import('../public/vocabulary.js');
+ assert.equal(conciseMeaning({shortMeaning:'脆弱的',contextualMeaning:'此处指幼树容易受到伤害或死亡，因为句子讨论幼树。'}),'脆弱的');
+ assert.equal(conciseMeaning({contextualMeaning:'此处指“城市中的”，因为句子讨论城市。'}),'城市中的');
+ assert.equal(conciseMeaning({contextualMeaning:'此处指容易受到伤害，因为句子讨论幼树。'}),'容易受到伤害');
+});

@@ -19,7 +19,7 @@ export function vocabularyMarkers(text, entries = []) {
   const markers=[];
   for(const entry of entries) {
     let start=entry.passageStart,end=entry.passageEnd;
-    const term=entry.term?.trim(), meaning=entry.contextualMeaning?.trim();
+    const term=entry.term?.trim(), meaning=conciseMeaning(entry);
     if(!term||!meaning)continue;
     if(!Number.isInteger(start)||!Number.isInteger(end)||start<0||end<=start||text.slice(start,end).toLowerCase()!==term.toLowerCase()) {
       // Earlier records have no offsets. Only use an unambiguous matching context.
@@ -33,4 +33,15 @@ export function vocabularyMarkers(text, entries = []) {
     if(!markers.some(marker=>marker.start===start&&marker.end===end))markers.push({start,end,meaning});
   }
   return markers.sort((a,b)=>a.end-b.end);
+}
+
+// Older query records contain explanations; only show the translation inline.
+export function conciseMeaning(entry) {
+  if(typeof entry.shortMeaning==='string'&&entry.shortMeaning.trim())return entry.shortMeaning.trim();
+  let text=String(entry.contextualMeaning||'').trim();
+  const quoted=text.match(/[“「]([^”」]+)[”」]/);
+  if(quoted)return quoted[1].trim();
+  return text.split(/(?:[，,。；;]\s*(?:因为|由于|因|这里|此处|在此|句子|原句|表示|强调|说明)|[。])/)[0]
+    .replace(/^(?:此处|这里|在此|在这里|在本句中|在该语境中)?(?:的意思是|意思是|指的是|是指|指|表示|意为)[：:、，,\s]*/, '')
+    .replace(/[。；;，,]+$/,'').trim();
 }
