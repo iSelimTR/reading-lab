@@ -2,6 +2,9 @@ import { cp, mkdir, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import {prepareExportAssets} from './prepare-assets.mjs';
+await prepareExportAssets();
+
 const root = fileURLToPath(new URL('../', import.meta.url));
 const destination = path.join(root, 'dist');
 await rm(destination, { recursive: true, force: true });

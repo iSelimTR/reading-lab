@@ -36,3 +36,18 @@ test('Word export creates a real docx package for wrong and missing answers',asy
  const bytes=await docx.Packer.toBuffer(document);
  assert.equal(bytes.subarray(0,2).toString(),'PK');assert.ok(bytes.length>5000);
 });
+
+test('startup prepares Word assets inside public for compatibility with an already running static server',async()=>{
+  const {mkdtemp,mkdir,writeFile,readFile,rm}=await import('node:fs/promises');
+  const path=await import('node:path');const os=await import('node:os');
+  const {prepareExportAssets}=await import('../scripts/prepare-assets.mjs');
+  const root=await mkdtemp(path.join(os.tmpdir(),'reading-word-assets-'));
+  try {
+    await mkdir(path.join(root,'node_modules/docx/dist'),{recursive:true});
+    await writeFile(path.join(root,'node_modules/docx/dist/index.mjs'),'export const Document = {};');
+    await writeFile(path.join(root,'node_modules/docx/LICENSE'),'MIT');
+    await prepareExportAssets(root);
+    assert.equal(await readFile(path.join(root,'public/vendor/docx/index.mjs'),'utf8'),'export const Document = {};');
+    assert.equal(await readFile(path.join(root,'public/vendor/docx/LICENSE'),'utf8'),'MIT');
+  } finally {await rm(root,{recursive:true,force:true});}
+});

@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {prepareExportAssets} from '../scripts/prepare-assets.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -174,6 +175,7 @@ export function createApp({ env = process.env, fetcher = fetch } = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await prepareExportAssets();
   const host = process.env.HOST || '127.0.0.1';
   const port = Number(process.env.PORT || 3000);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT 应为 1–65535。');

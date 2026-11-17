@@ -5,7 +5,7 @@ export function createReviewDocument(input, lib) {
   const report=buildReviewData(input);
   const {Document,Paragraph,TextRun,HeadingLevel,Footer,PageNumber,AlignmentType}=lib;
   const run=(text,options={})=>new TextRun({text:String(text),...options});
-  const p=(text,options={})=>new Paragraph({children:[run(text)],spacing:{after:110,line:290},...options});
+  const p=(text,options={})=>new Paragraph({children:[run(text)],spacing:{after:110,line:290},widowControl:true,...options});
   const heading=(text,level=HeadingLevel.HEADING_1,options={})=>p(text,{heading:level,keepNext:true,spacing:{before:240,after:120},...options});
   const children=[
     p('阅读练习复盘',{heading:HeadingLevel.TITLE,spacing:{after:160}}),
@@ -25,7 +25,7 @@ export function createReviewDocument(input, lib) {
   }
   const unmatched=report.items.filter(item=>!item.range).map(item=>item.number);
   if(unmatched.length) children.push(p(`第 ${unmatched.join('、')} 题的证据未能在原文中精确定位，未进行自动高亮。请在该题的“原文依据”中核对。`));
-  children.push(heading('作答与逐题解析',HeadingLevel.HEADING_1,{pageBreakBefore:true}));
+  children.push(heading('作答与逐题解析'));
   const wrong=report.items.filter(item=>!item.correct);
   children.push(p(wrong.length ? `本轮需要复习的题号：${wrong.map(item=>item.number).join('、')}。先比较所选项和正确项，再结合原文依据复盘。` : '本轮全部答对。可以重点复习每题的原文定位与同义表达。'));
   for (const item of report.items) {
@@ -41,7 +41,7 @@ export function createReviewDocument(input, lib) {
     children.push(p(item.correct?'本题解析':'错题分析',{keepNext:true,spacing:{before:110,after:60}}));
     if(!item.correct) children.push(p(item.selected===null?'本题没有作答。请先回到高亮证据定位，再比较四个选项。':`本次错选 ${LETTERS[item.selected]}，应选 ${LETTERS[item.answerIndex]}。请比较所选项与以下原文依据。`));
     children.push(p(item.explanation || '本题未提供文字解析，请对照原文依据复习。'));
-    children.push(p(`原文依据 对应原文标记 ${item.number}`,{keepNext:true,spacing:{before:90,after:60}}),p(item.evidence || '未提供原文依据。'));
+    children.push(p(`原文依据 对应原文标记 ${item.number}`,{keepNext:true,spacing:{before:90,after:60}}),p(item.evidence || '未提供原文依据。',{keepLines:true}));
   }
   if(report.annotations.length) {
     const annotationSource=report.passage.split(/\n\s*\n/).filter(Boolean).join('');
@@ -59,12 +59,12 @@ export function createReviewDocument(input, lib) {
 }
 
 export async function downloadReviewWord(input) {
-  const lib=await import('./vendor/docx/index.mjs');
+  const lib=await import('./vendor/docx/index.mjs?version=2');
   const blob=await lib.Packer.toBlob(createReviewDocument(input,lib));
   const date=new Date().toLocaleDateString('en-CA');
   const title=String(input.title||'阅读练习').replace(/[<>:"/\\|?*\x00-\x1f]/g,'').slice(0,55)||'阅读练习';
   const url=URL.createObjectURL(blob);
   const anchor=document.createElement('a');anchor.href=url;anchor.download=`${title}_复盘_${date}.docx`;
   document.body.append(anchor);anchor.click();anchor.remove();
-  setTimeout(()=>URL.revokeObjectURL(url),60_000);
+  return {url,filename:anchor.download};
 }

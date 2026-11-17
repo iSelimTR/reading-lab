@@ -10,6 +10,7 @@ let questions = [];
 let answers = {};
 let submitted = false;
 let currentQuiz = null;
+let exportDownloadURL = null;
 let attemptStarted = null;
 let generationPassage = '';
 let annotations = [];
@@ -167,6 +168,9 @@ function startAttempt(nextQuestions) {
   attemptStarted = Date.now();
   $('score').hidden = true;
   $('reviewActions').hidden = true;
+  if(exportDownloadURL){URL.revokeObjectURL(exportDownloadURL);exportDownloadURL=null;}
+  $('exportStatus').hidden = true;
+  $('exportDownloadLink').hidden = true;
   $('submit').hidden = false;
   $('submitHint').textContent = '选好答案后，提交查看解析。';
   $('step1').classList.remove('active');
@@ -256,11 +260,25 @@ $('export').addEventListener('click', async () => {
   if (!submitted || !currentQuiz) return;
   $('export').disabled = true;
   $('export').textContent = '正在生成 Word…';
+  $('exportStatus').hidden = false;
+  $('exportStatus').textContent = '正在准备 Word 文件，请稍候…';
+  $('exportStatus').classList.remove('error');
+  $('exportDownloadLink').hidden = true;
   try {
-    const { downloadReviewWord } = await import('./export-word.js');
-    await downloadReviewWord({title:currentQuiz.title, passage:generationPassage, questions:[...questions], answers:{...answers}, annotations:annotations.map(note=>({...note}))});
-    tell('Word 复盘已生成，包含原文高亮、你的作答与逐题解析。请在浏览器下载列表查看。');
-  } catch { tell('Word 导出失败，请刷新页面后重试，并确认程序依赖安装完整。',true); }
+    const { downloadReviewWord } = await import('./export-word.js?version=2');
+    const download = await downloadReviewWord({title:currentQuiz.title, passage:generationPassage, questions:[...questions], answers:{...answers}, annotations:annotations.map(note=>({...note}))});
+    if(exportDownloadURL) URL.revokeObjectURL(exportDownloadURL);
+    exportDownloadURL = download.url;
+    $('exportDownloadLink').href = download.url;
+    $('exportDownloadLink').download = download.filename;
+    $('exportDownloadLink').hidden = false;
+    $('exportStatus').textContent = 'Word 已准备好。如果没有自动下载，请点击下面的保存链接。';
+    tell('Word 复盘已生成。下载按钮旁可再次点击保存文件。');
+  } catch {
+    $('exportStatus').classList.add('error');
+    $('exportStatus').textContent = 'Word 文件准备失败。请先重启阅读控制台中的服务；若仍失败，先保留本页，不要重新做题。';
+    tell('Word 导出失败，请查看下载按钮旁的提示。',true);
+  }
   finally { $('export').disabled = false; $('export').textContent = '下载 Word 复盘 ↓'; }
 });
 
