@@ -1,3 +1,4 @@
+import {readSession,writeSession} from './session.js';
 import { generateBasicQuiz, gradeQuiz, DEMO_TEXT } from './src/questions.js';
 import { openPDF, extractPDF } from './pdf.js';
 import { selectionContext, vocabularyIdentity, vocabularyMarkers } from './vocabulary.js';
@@ -14,6 +15,9 @@ let submitted = false;
 let currentQuiz = null;
 let exportDownloadURL = null;
 let attemptStarted = null;
+let attemptFinished = null;
+let persistenceReady = false;
+let saveQueued = false;
 let generationPassage = '';
 let annotations = [];
 let vocabulary = [];
@@ -48,6 +52,7 @@ function tell(message = '', error = false) {
   $('message').hidden = !message;
   $('message').textContent = message;
   $('message').classList.toggle('error', error);
+  queueSave();
 }
 
 function setBusy(value, message = '') {
@@ -59,6 +64,7 @@ function setBusy(value, message = '') {
 }
 
 function countWords() {
+  queueSave();
   const matches = $('passage').value.match(/[A-Za-z]+(?:['’-][A-Za-z]+)*/g);
   $('wordCount').textContent = `${matches?.length || 0} words`;
 }
@@ -173,6 +179,7 @@ $('generate').addEventListener('click', async () => {
 });
 
 function updateProgress() {
+  queueSave();
   $('progress').textContent = `已答 ${Object.keys(answers).length} / ${questions.length}`;
 }
 
@@ -181,6 +188,7 @@ function startAttempt(nextQuestions) {
   answers = {};
   submitted = false;
   attemptStarted = Date.now();
+  attemptFinished = null;
   $('score').hidden = true;
   $('reviewActions').hidden = true;
   if(exportDownloadURL){URL.revokeObjectURL(exportDownloadURL);exportDownloadURL=null;}
@@ -238,6 +246,13 @@ $('quizForm').addEventListener('submit', event => {
     return;
   }
   submitted = true;
+  attemptFinished = Date.now();
+  renderSubmittedResult();
+  tell();
+  $('score').scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
+function renderSubmittedResult() {
   const result = gradeQuiz(questions, answers);
   renderQuestions();
   $('score').replaceChildren();
@@ -245,7 +260,7 @@ $('quizForm').addEventListener('submit', event => {
   value.append(element('small', '', ` / ${result.total}`));
   const copy = element('div', 'score-copy');
   copy.append(element('strong', '', result.correct === result.total ? '这一轮全部答对了。' : '完成一轮，读懂更多。'),
-    element('p', '', `正确率 ${result.percent}% · 用时 ${Math.max(1, Math.round((Date.now() - attemptStarted) / 60_000))} 分钟。下面查看解析和原文依据。`));
+    element('p', '', `正确率 ${result.percent}% · 用时 ${Math.max(1, Math.round(((attemptFinished || Date.now()) - attemptStarted) / 60_000))} 分钟。下面查看解析和原文依据。`));
   $('score').append(value, copy);
   $('score').hidden = false;
   $('submit').hidden = true;
@@ -254,9 +269,7 @@ $('quizForm').addEventListener('submit', event => {
   $('retryWrong').disabled = result.correct === result.total;
   $('step2').classList.remove('active');
   $('step3').classList.add('active');
-  tell();
-  $('score').scrollIntoView({ behavior: 'smooth', block: 'start' });
-});
+}
 
 $('retryWrong').addEventListener('click', () => {
   const wrong = questions.filter(question => answers[question.id] !== question.answerIndex);
@@ -315,6 +328,7 @@ updateAISettings();
 
 // Annotation offsets refer to readingText.textContent, excluding decorative question badges.
 function renderPassage() {
+  queueSave();
   let offset = 0;
   const markers = vocabularyMarkers(generationPassage.split(/\n\s*\n/).filter(Boolean).join(''),vocabulary);
   const paragraphs = generationPassage.split(/\n\s*\n/).filter(Boolean).map(text => {
@@ -517,3 +531,49 @@ window.addEventListener('scroll',event=>{if(!$('translationPanel').contains(even
 window.addEventListener('resize',queueTranslationPosition);
 document.addEventListener('keydown',event=>{if(event.key==='Escape')$('translationPanel').hidden=true;});
 new ResizeObserver(queueTranslationPosition).observe($('translationPanel'));
+
+function queueSave() {
+  if(!persistenceReady||saveQueued)return;
+  saveQueued=true;
+  queueMicrotask(()=>{saveQueued=false;saveProgress();});
+}
+function saveProgress() {
+  if(!persistenceReady)return;
+  try {
+    writeSession(localStorage,{draft:$('passage').value,passage:generationPassage,quiz:currentQuiz,allQuestions,questionIds:questions.map(q=>q.id),answers,submitted,attemptStarted,attemptFinished,annotations,vocabulary,view:$('practice').hidden?'setup':'practice',settings:{mode:$('mode').value,count:$('questionCount').value,difficulty:$('difficulty').value}});
+    $('saveStatus').textContent='已自动保存到当前浏览器 · 关闭后重新打开可恢复';
+  } catch {
+    $('saveStatus').textContent='自动保存失败：浏览器存储不可用或已满。请先下载 Word 复盘。';
+  }
+}
+function restoreProgress() {
+  let saved;try{saved=readSession(localStorage);}catch{return;}
+  if(!saved)return;
+  $('passage').value=saved.draft;countWords();
+  $('mode').value=saved.settings.mode==='ai'&&!backendAvailable?'basic':saved.settings.mode;
+  $('questionCount').value=saved.settings.count;$('difficulty').value=saved.settings.difficulty;
+  $('difficulty').disabled=$('mode').value!=='ai';
+  $('modeHelp').textContent=$('mode').value==='ai'?'AI 会生成细节、同义替换、推断和主旨选择题，附中文解析与原文依据。':'基础模式免费使用，根据文章自动生成原文填空题。';
+  if(saved.quiz&&saved.allQuestions.length&&saved.passage) {
+    currentQuiz=saved.quiz;allQuestions=saved.allQuestions;generationPassage=saved.passage;
+    const subset=saved.questionIds.length?saved.questionIds:allQuestions.map(q=>q.id);
+    startAttempt(subset.map(id=>allQuestions.find(q=>q.id===id)).filter(Boolean));
+    answers=saved.answers;submitted=saved.submitted;
+    attemptStarted=saved.attemptStarted||Date.now();attemptFinished=saved.attemptFinished;
+    annotations=saved.annotations;annotationSequence=Math.max(0,...annotations.map(n=>n.id));vocabulary=saved.vocabulary;
+    $('quizTitle').textContent=currentQuiz.title;
+    $('quizMode').textContent=currentQuiz.mode==='ai'?'DEEPSEEK · 理解与推断':'BASIC READING · 原文填空选择题';
+    renderPassage();renderVocabulary();renderAnnotationControls();renderQuestions();updateProgress();
+    if(submitted)renderSubmittedResult();
+    $('setup').hidden=saved.view==='practice';$('practice').hidden=saved.view!=='practice';
+    if(saved.view==='setup') { $('step1').classList.add('active');$('step2').classList.remove('active');$('step3').classList.remove('active'); }
+    if(saved.view==='practice')requestAnimationFrame(()=>$('practice').scrollIntoView({block:'start'}));
+  }
+  $('saveStatus').textContent='已恢复上次学习进度 · 后续修改会自动保存';
+  if(saved.draft||saved.quiz)tell('已恢复上次的文章和学习进度，可以继续。');
+}
+for(const id of ['mode','questionCount','difficulty'])$(id).addEventListener('change',queueSave);
+window.addEventListener('pagehide',saveProgress);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)saveProgress();});
+restoreProgress();
+persistenceReady=true;
