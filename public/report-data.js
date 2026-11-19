@@ -1,3 +1,4 @@
+import {evaluateAnswer} from './original-quiz.js';
 import { vocabularyMarkers } from './vocabulary.js';
 // Normalize for evidence matching while retaining UTF-16 offsets into the original PDF text.
 export function normalizedIndex(source) {
@@ -29,16 +30,14 @@ export function buildReviewData({title, passage, questions, answers, annotations
   if (typeof passage !== 'string' || !Array.isArray(questions) || !questions.length) throw new Error('没有可导出的练习。');
   const source = normalizedIndex(passage);
   const items = questions.map((question,index) => {
-    const selected = answers?.[question.id];
-    const answered = Number.isInteger(selected) && selected >= 0 && selected < question.options.length;
+    const result=evaluateAnswer(question,answers?.[question.id]);
     const evidence = normalizedIndex(String(question.evidence || '')).text;
     const position = evidence ? source.text.indexOf(evidence) : -1;
-    return { ...question, number:index+1, selected:answered ? selected : null,
-      correct:answered && selected === question.answerIndex,
+    return { ...question, number:index+1, ...result,
       range:position < 0 ? null : {start:source.starts[position],end:source.ends[position+evidence.length-1]} };
   });
-  const correct = items.filter(item=>item.correct).length;
-  return {title:String(title || '阅读练习'), passage, items, correct, total:items.length,
+  const correct = items.filter(item=>item.correct===true).length;
+  return {title:String(title || '阅读练习'), passage, items, correct, gradedTotal:items.filter(item=>item.hasAnswer).length,pending:items.filter(item=>!item.hasAnswer).length,total:items.length,
     date:new Date(date).toLocaleString('zh-CN'), vocabulary:Array.isArray(vocabulary)?vocabulary.filter(entry=>entry&&['term','context','generalMeaning','contextualMeaning','contextTranslation'].every(field=>typeof entry[field]==='string'&&entry[field].length<=2000)).map(entry=>({term:entry.term,shortMeaning:typeof entry.shortMeaning==='string'?entry.shortMeaning.slice(0,200):'',passageStart:entry.passageStart,passageEnd:entry.passageEnd,context:entry.context,generalMeaning:entry.generalMeaning,contextualMeaning:entry.contextualMeaning,contextTranslation:entry.contextTranslation,lemma:String(entry.lemma||''),partOfSpeech:String(entry.partOfSpeech||'')})):[], annotations:annotations.filter(note=>Number.isInteger(note.start)&&Number.isInteger(note.end)&&note.start>=0&&note.end>note.start) };
 }
 

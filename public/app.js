@@ -1,3 +1,5 @@
+import {originalImportUI} from './original-ui.js';
+import {evaluateAnswer,gradeReading,answerLabel,answerSourceLabel,questionKind} from './original-quiz.js';
 import {readSession,writeSession} from './session.js';
 import { generateBasicQuiz, gradeQuiz, DEMO_TEXT } from './src/questions.js';
 import { openPDF, extractPDF } from './pdf.js';
@@ -36,6 +38,7 @@ function selectedModel() { return document.querySelector('input[name="deepseekMo
 function updateAISettings() {
   const ownKey = Boolean($('deepseekKey').value.trim());
   $('mode').options[1].disabled = !backendAvailable;
+  $('parseOriginal').disabled = busy || !backendAvailable;
   $('deepseekKey').disabled = busy || !backendAvailable;
   $('clearKey').disabled = busy || !ownKey || !backendAvailable;
   for (const radio of document.querySelectorAll('input[name="deepseekModel"]')) radio.disabled = busy || !backendAvailable;
@@ -57,9 +60,10 @@ function tell(message = '', error = false) {
 
 function setBusy(value, message = '') {
   busy = value;
-  for (const id of ['demo', 'file', 'extract', 'generate', 'passage', 'startPage', 'endPage', 'forceOcr', 'ocrLanguage', 'mode', 'questionCount']) $(id).disabled = value;
+  for (const id of ['demo', 'file', 'extract', 'generate', 'passage', 'startPage', 'endPage', 'forceOcr', 'ocrLanguage', 'mode', 'questionCount', 'parseOriginal', 'startOriginal', 'pdfTextTarget', 'originalQuestionText', 'originalAnswerText']) $(id).disabled = value;
   $('difficulty').disabled = value || $('mode').value !== 'ai';
   updateAISettings();
+  updateOriginalMode();
   if (message) tell(message);
 }
 
@@ -83,14 +87,17 @@ async function choosePDF(file) {
   try {
     const loaded = await openPDF(file);
     pdf = loaded;
+    $('previewPDF').hidden=false;$('previewPage').max=pdf.numPages;$('previewPage').value=1;
+    if($('previewPDF').open)originalUI.showPage();
     if (previous) await previous.destroy();
     $('fileName').textContent = file.name;
     $('pdfControls').hidden = false;
     $('startPage').value = 1;
     $('endPage').value = Math.min(3, pdf.numPages);
     $('startPage').max = $('endPage').max = pdf.numPages;
-    $('passage').value = '';
+    // Keep extracted text when uploading a separate question or answer PDF.
     countWords();
+    $('pdfTextTarget').value='combined';
     $('pdfHint').textContent = `共 ${pdf.numPages} 页。选择正文所在页，每次最多 20 页。`;
     tell('PDF 已就绪，选择页码后点击“识别所选页面”。');
   } catch (error) {
@@ -106,9 +113,10 @@ for (const type of ['dragleave', 'drop']) $('dropzone').addEventListener(type, e
 $('dropzone').addEventListener('drop', event => choosePDF(event.dataTransfer.files[0]));
 $('passage').addEventListener('input', countWords);
 $('mode').addEventListener('change', () => {
-  if ($('mode').value === 'ai') $('deepseekSettings').open = true;
+  if ($('mode').value !== 'basic') $('deepseekSettings').open = true;
+  updateOriginalMode();
   $('difficulty').disabled = $('mode').value !== 'ai';
-  $('modeHelp').textContent = $('mode').value === 'ai' ? 'AI 会生成细节、同义替换、推断和主旨选择题，附中文解析与原文依据。' : '基础模式免费使用，根据文章自动生成原文填空题。';
+  $('modeHelp').textContent = $('mode').value === 'original' ? '保留 PDF 自带的题目。识别使用 DeepSeek，先核对再开始；缺少答案可选择 AI 参考答案。' : $('mode').value === 'ai' ? 'AI 会生成细节、同义替换、推断和主旨选择题，附中文解析与原文依据。' : '基础模式免费使用，根据文章自动生成原文填空题。';
 });
 
 $('demo').addEventListener('click', () => {
@@ -123,11 +131,15 @@ $('extract').addEventListener('click', async () => {
   try {
     const result = await extractPDF(pdf, {
       start: Number($('startPage').value), end: Number($('endPage').value),
-      forceOCR: $('forceOcr').checked, language: $('ocrLanguage').value, onProgress: tell
+      forceOCR: $('forceOcr').checked, language: $('ocrLanguage').value, minTextLength:$('pdfTextTarget').value==='answers'?6:40, onProgress: tell
     });
-    $('passage').value = result.text;
+    const target=$('pdfTextTarget').value;
+    if(target==='questions')$('originalQuestionText').value=result.text;
+    else if(target==='answers')$('originalAnswerText').value=result.text;
+    else $('passage').value = result.text;
+    queueSave();
     countWords();
-    tell(`已读取 ${result.pageCount} 页，其中 ${result.ocrPages} 页使用 OCR。请检查正文后生成练习。`);
+    tell(`已读取 ${result.pageCount} 页，其中 ${result.ocrPages} 页使用 OCR。原题模式请同时包含文章和题目页；答案页可单独读取，再点击“识别原文与原题”。`);
   } catch (error) { tell(error.message || '文字识别失败，请检查网络和文件后重试。', true); }
   finally { setBusy(false); }
 });
@@ -154,11 +166,17 @@ $('generate').addEventListener('click', async () => {
       if (!response.ok) throw new Error(data.error || 'AI 生成失败，请重试。');
       quiz = data;
     } else { quiz = generateBasicQuiz(text, count); }
+    activateQuiz(quiz,text);
+  } catch (error) { tell(error.message || '生成失败，请稍后重试。', true); }
+  finally { setBusy(false); }
+});
+
+function activateQuiz(quiz,text) {
     currentQuiz = quiz;
     allQuestions = quiz.questions;
     generationPassage = text;
     $('quizTitle').textContent = quiz.title;
-    $('quizMode').textContent = quiz.mode === 'ai' ? 'DEEPSEEK · ' + (quiz.model === 'deepseek-v4-pro' ? 'V4 PRO' : 'FLASH') + ' · 理解与推断' : 'BASIC READING · 原文填空选择题';
+    $('quizMode').textContent = quiz.mode === 'original' ? 'PDF 原题 · 已核对的原文题目' : quiz.mode === 'ai' ? 'DEEPSEEK · ' + (quiz.model === 'deepseek-v4-pro' ? 'V4 PRO' : 'FLASH') + ' · 理解与推断' : 'BASIC READING · 原文填空选择题';
     annotations = [];
     vocabulary = [];
     translationResult = null;
@@ -172,15 +190,13 @@ $('generate').addEventListener('click', async () => {
     $('setup').hidden = true;
     $('practice').hidden = false;
     startAttempt(allQuestions);
-    tell(quiz.questions.length < count ? `这段文章适合生成 ${quiz.questions.length} 道题，已按实际可用句子出题。` : '练习已生成。先独立作答，提交后查看解析。');
+    tell(quiz.mode!=='original' && quiz.questions.length < Number($('questionCount').value) ? `这段文章适合生成 ${quiz.questions.length} 道题，已按实际可用句子出题。` : '练习已生成。先独立作答，提交后查看解析。');
     $('practice').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  } catch (error) { tell(error.message || '生成失败，请稍后重试。', true); }
-  finally { setBusy(false); }
-});
+}
 
 function updateProgress() {
   queueSave();
-  $('progress').textContent = `已答 ${Object.keys(answers).length} / ${questions.length}`;
+  $('progress').textContent = `已答 ${questions.filter(q=>evaluateAnswer(q,answers[q.id]).answered).length} / ${questions.length}`;
 }
 
 function startAttempt(nextQuestions) {
@@ -205,43 +221,43 @@ function startAttempt(nextQuestions) {
 
 function renderQuestions() {
   $('questions').replaceChildren();
-  questions.forEach((question, index) => {
-    const fieldset = element('fieldset', 'question-card');
-    fieldset.dataset.question = question.id;
-    const legend = element('legend');
-    const meta = element('span', 'question-meta');
-    meta.append(element('span', 'question-number', `${String(index + 1).padStart(2, '0')} / ${String(questions.length).padStart(2, '0')}`), element('span', '', question.type));
-    legend.append(meta, element('span', 'question-prompt', question.prompt));
-    fieldset.append(legend);
-    question.options.forEach((option, optionIndex) => {
-      const label = element('label', 'option');
-      const input = document.createElement('input');
-      input.type = 'radio'; input.name = question.id; input.value = optionIndex;
-      input.checked = answers[question.id] === optionIndex;
-      input.disabled = submitted;
-      input.addEventListener('change', () => { answers[question.id] = optionIndex; updateProgress(); });
-      label.append(input, element('span', 'option-letter', LETTERS[optionIndex]), element('span', '', option));
-      if (submitted && optionIndex === question.answerIndex) label.classList.add('correct-option');
-      if (submitted && answers[question.id] === optionIndex && optionIndex !== question.answerIndex) label.classList.add('wrong-option');
-      fieldset.append(label);
+  questions.forEach((question,index)=>{
+    const result=evaluateAnswer(question,answers[question.id]),fieldset=element('fieldset','question-card');fieldset.dataset.question=question.id;
+    const legend=element('legend'),meta=element('span','question-meta');
+    meta.append(element('span','question-number',String(index+1).padStart(2,'0')+' / '+String(questions.length).padStart(2,'0')),element('span','',question.type+(question.originalNumber?' · 原题 '+question.originalNumber:'')));
+    legend.append(meta,element('span','question-prompt',question.prompt));fieldset.append(legend);
+    if(question.instructions)fieldset.append(element('p','help',question.instructions));
+    if(question.answerSource)fieldset.append(element('p','answer-source',answerSourceLabel(question)+(question.answerSource==='ai'?' · 请结合原文核对':'')));
+    if(questionKind(question)==='fill') {
+      const label=element('label','fill-answer','填写答案'+(question.maxWords?'（最多 '+question.maxWords+' 词）':''));
+      const input=element('input');input.type='text';input.maxLength=200;input.autocomplete='off';input.spellcheck=false;input.value=typeof answers[question.id]==='string'?answers[question.id]:'';input.disabled=submitted;
+      input.setAttribute('aria-label','原题 '+(question.originalNumber||index+1)+' 填空答案');
+      input.addEventListener('input',()=>{answers[question.id]=input.value;updateProgress();});
+      if(submitted&&result.correct!==null)input.className=result.correct?'correct-fill':'wrong-fill';label.append(input);fieldset.append(label);
+    } else question.options.forEach((option,optionIndex)=>{
+      const label=element('label','option'),input=element('input');input.type='radio';input.name=question.id;input.value=optionIndex;input.checked=answers[question.id]===optionIndex;input.disabled=submitted;
+      input.addEventListener('change',()=>{answers[question.id]=optionIndex;updateProgress();});
+      label.append(input,element('span','option-letter',questionKind(question)==='tfng'?'':String.fromCharCode(65+optionIndex)),element('span','',option));
+      if(submitted&&result.hasAnswer&&optionIndex===question.answerIndex)label.classList.add('correct-option');
+      if(submitted&&result.hasAnswer&&answers[question.id]===optionIndex&&optionIndex!==question.answerIndex)label.classList.add('wrong-option');fieldset.append(label);
     });
-    if (submitted) {
-      const correct = answers[question.id] === question.answerIndex;
-      const review = element('div', 'answer-review');
-      review.append(element('p', `answer-verdict${correct ? '' : ' wrong'}`, correct ? '✓ 回答正确' : `${answers[question.id] === undefined ? '未作答' : '回答有误'} · 正确答案 ${LETTERS[question.answerIndex]}`),
-        element('p', '', question.explanation), element('p', 'help', '原文依据'), element('blockquote', 'evidence', question.evidence));
-      fieldset.append(review);
+    if(submitted){
+      const review=element('div','answer-review');
+      const verdict=result.correct===null?'未提供答案 · 本题暂不计分':result.correct?'✓ 回答正确':(result.answered?'回答有误':'未作答')+' · 正确答案 '+answerLabel(question);
+      review.append(element('p','answer-verdict'+(result.correct===false?' wrong':''),verdict));
+      if(result.limitExceeded)review.append(element('p','wrong','超过原题字数限制，最多 '+question.maxWords+' 词。'));
+      review.append(element('p','',question.explanation||'请对照原文核对。'),element('p','help','原文依据'),element('blockquote','evidence',question.evidence||'没有可直接定位的关键句，请结合原文核对。'));
+      if(question.answerEvidence)review.append(element('p','help','答案页依据：'+question.answerEvidence));fieldset.append(review);
     }
     $('questions').append(fieldset);
   });
 }
-
 $('quizForm').addEventListener('submit', event => {
   event.preventDefault();
   if (submitted || !questions.length) return;
-  const missing = questions.filter(question => answers[question.id] === undefined);
+  const missing = questions.filter(question => !evaluateAnswer(question,answers[question.id]).answered);
   if (missing.length) {
-    tell(`还有 ${missing.length} 道题没有选择。先完成后再提交。`, true);
+    tell(`还有 ${missing.length} 道题没有作答。先完成后再提交。`, true);
     document.querySelector(`[data-question="${missing[0].id}"] input`)?.focus();
     return;
   }
@@ -253,26 +269,26 @@ $('quizForm').addEventListener('submit', event => {
 });
 
 function renderSubmittedResult() {
-  const result = gradeQuiz(questions, answers);
+  const result = gradeReading(questions, answers);
   renderQuestions();
   $('score').replaceChildren();
   const value = element('div', 'score-value', String(result.correct));
-  value.append(element('small', '', ` / ${result.total}`));
+  value.append(element('small', '', ` / ${result.gradedTotal}`));
   const copy = element('div', 'score-copy');
-  copy.append(element('strong', '', result.correct === result.total ? '这一轮全部答对了。' : '完成一轮，读懂更多。'),
-    element('p', '', `正确率 ${result.percent}% · 用时 ${Math.max(1, Math.round(((attemptFinished || Date.now()) - attemptStarted) / 60_000))} 分钟。下面查看解析和原文依据。`));
+  copy.append(element('strong', '', result.correct === result.gradedTotal && result.pending===0 ? '这一轮全部答对了。' : '完成一轮，读懂更多。'),
+    element('p', '', `正确率 ${result.percent}%${result.pending ? ` · ${result.pending} 题无答案，暂不计分` : ''} · 用时 ${Math.max(1, Math.round(((attemptFinished || Date.now()) - attemptStarted) / 60_000))} 分钟。下面查看解析和原文依据。`));
   $('score').append(value, copy);
   $('score').hidden = false;
   $('submit').hidden = true;
   $('submitHint').textContent = '绿色标记正确选项，红色标记本次选错的答案。';
   $('reviewActions').hidden = false;
-  $('retryWrong').disabled = result.correct === result.total;
+  $('retryWrong').disabled = !result.results.some(item=>item.correct===false);
   $('step2').classList.remove('active');
   $('step3').classList.add('active');
 }
 
 $('retryWrong').addEventListener('click', () => {
-  const wrong = questions.filter(question => answers[question.id] !== question.answerIndex);
+  const wrong = questions.filter(question => evaluateAnswer(question,answers[question.id]).correct===false);
   if (!wrong.length) return;
   startAttempt(wrong);
   tell('已载入本轮错题。独立重做后再核对依据。');
@@ -540,7 +556,7 @@ function queueSave() {
 function saveProgress() {
   if(!persistenceReady)return;
   try {
-    writeSession(localStorage,{draft:$('passage').value,passage:generationPassage,quiz:currentQuiz,allQuestions,questionIds:questions.map(q=>q.id),answers,submitted,attemptStarted,attemptFinished,annotations,vocabulary,view:$('practice').hidden?'setup':'practice',settings:{mode:$('mode').value,count:$('questionCount').value,difficulty:$('difficulty').value}});
+    writeSession(localStorage,{draft:$('passage').value,passage:generationPassage,quiz:currentQuiz,allQuestions,questionIds:questions.map(q=>q.id),answers,submitted,attemptStarted,attemptFinished,annotations,vocabulary,view:$('practice').hidden?'setup':'practice',settings:{mode:$('mode').value,count:$('questionCount').value,difficulty:$('difficulty').value},originalImport:originalUI.getDraft()});
     $('saveStatus').textContent='已自动保存到当前浏览器 · 关闭后重新打开可恢复';
   } catch {
     $('saveStatus').textContent='自动保存失败：浏览器存储不可用或已满。请先下载 Word 复盘。';
@@ -550,10 +566,12 @@ function restoreProgress() {
   let saved;try{saved=readSession(localStorage);}catch{return;}
   if(!saved)return;
   $('passage').value=saved.draft;countWords();
+  originalUI.restore(saved.originalImport);
   $('mode').value=saved.settings.mode==='ai'&&!backendAvailable?'basic':saved.settings.mode;
+  updateOriginalMode();
   $('questionCount').value=saved.settings.count;$('difficulty').value=saved.settings.difficulty;
   $('difficulty').disabled=$('mode').value!=='ai';
-  $('modeHelp').textContent=$('mode').value==='ai'?'AI 会生成细节、同义替换、推断和主旨选择题，附中文解析与原文依据。':'基础模式免费使用，根据文章自动生成原文填空题。';
+  $('modeHelp').textContent=$('mode').value==='original'?'保留 PDF 自带的题目。识别使用 DeepSeek，先核对再开始；缺少答案可选择 AI 参考答案。':$('mode').value==='ai'?'AI 会生成细节、同义替换、推断和主旨选择题，附中文解析与原文依据。':'基础模式免费使用，根据文章自动生成原文填空题。';
   if(saved.quiz&&saved.allQuestions.length&&saved.passage) {
     currentQuiz=saved.quiz;allQuestions=saved.allQuestions;generationPassage=saved.passage;
     const subset=saved.questionIds.length?saved.questionIds:allQuestions.map(q=>q.id);
@@ -562,7 +580,7 @@ function restoreProgress() {
     attemptStarted=saved.attemptStarted||Date.now();attemptFinished=saved.attemptFinished;
     annotations=saved.annotations;annotationSequence=Math.max(0,...annotations.map(n=>n.id));vocabulary=saved.vocabulary;
     $('quizTitle').textContent=currentQuiz.title;
-    $('quizMode').textContent=currentQuiz.mode==='ai'?'DEEPSEEK · 理解与推断':'BASIC READING · 原文填空选择题';
+    $('quizMode').textContent=currentQuiz.mode==='original'?'PDF 原题 · 已核对的原文题目':currentQuiz.mode==='ai'?'DEEPSEEK · 理解与推断':'BASIC READING · 原文填空选择题';
     renderPassage();renderVocabulary();renderAnnotationControls();renderQuestions();updateProgress();
     if(submitted)renderSubmittedResult();
     $('setup').hidden=saved.view==='practice';$('practice').hidden=saved.view!=='practice';
@@ -575,5 +593,7 @@ function restoreProgress() {
 for(const id of ['mode','questionCount','difficulty'])$(id).addEventListener('change',queueSave);
 window.addEventListener('pagehide',saveProgress);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)saveProgress();});
+function updateOriginalMode(){const original=$('mode').value==='original';$('originalTools').hidden=!original;$('generate').hidden=original;$('questionCount').disabled=busy||original;$('difficulty').disabled=busy||original||$('mode').value!=='ai';if(original)$('modeHelp').textContent='保留 PDF 自带的题目。识别使用 DeepSeek，先核对再开始；缺少答案可选择 AI 参考答案。';}
+const originalUI=originalImportUI({getPDF:()=>pdf,getSettings:()=>({available:backendAvailable,configured:serverDeepSeekKey,model:selectedModel(),key:$('deepseekKey').value.trim()}),setBusy,tell,onStart:article=>activateQuiz(article,article.passage),onChange:queueSave});
 restoreProgress();
 persistenceReady=true;

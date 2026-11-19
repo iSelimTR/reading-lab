@@ -1,3 +1,4 @@
+import {importOriginalQuestions} from './original-import.js';
 import http from 'node:http';
 import {translateSelection} from './translation.js';
 import {prepareExportAssets} from '../scripts/prepare-assets.mjs';
@@ -28,12 +29,12 @@ function authenticated(request, password) {
   } catch { return false; }
 }
 
-async function readJson(request) {
+async function readJson(request,limit=150_000) {
   let size = 0;
   const parts = [];
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 150_000) throw new Error('请求过大。请选择更少的 PDF 页面。');
+    if (size > limit) throw new Error('请求过大。请选择更少的 PDF 页面。');
     parts.push(chunk);
   }
   try { return JSON.parse(Buffer.concat(parts).toString('utf8')); }
@@ -115,6 +116,21 @@ export function createApp({ env = process.env, fetcher = fetch } = {}) {
     catch { return sendJson(response, 400, { error: '无效地址。' }); }
     try {
       if (pathname === '/api/config' && request.method === 'GET') return sendJson(response, 200, { aiEnabled: Boolean(env.OPENAI_API_KEY), deepseekAvailable: true, deepseekConfigured: hasDeepSeekKey(env), deepseekModel: hasDeepSeekKey(env) && DEEPSEEK_MODELS.includes(env.OPENAI_MODEL) ? env.OPENAI_MODEL : 'deepseek-flash' });
+      if(pathname==='/api/import-original'&&request.method==='POST') {
+        const origin=request.headers.origin;
+        if(origin&&new URL(origin).host!==request.headers.host)return sendJson(response,403,{error:'请从本站提交原题识别。'});
+        if(!String(request.headers['content-type']).startsWith('application/json'))return sendJson(response,415,{error:'需要 JSON 请求。'});
+        const payload=await readJson(request,300_000);
+        if(typeof payload.text!=='string'||payload.text.trim().length<80||[payload.questionText??'',payload.answerText??''].some(v=>typeof v!=='string')||[payload.text,payload.questionText||'',payload.answerText||''].join('').length>60000||payload.inferMissing!==undefined&&typeof payload.inferMissing!=='boolean')return sendJson(response,400,{error:'请提供完整文章和题目，总长度不能超过 60000 字符。'});
+        const settings=payload.deepseek||{model:'deepseek-flash'};
+        if(!settings||!DEEPSEEK_MODELS.includes(settings.model)||settings.key!==undefined&&(typeof settings.key!=='string'||settings.key.length>512||/[^\x21-\x7e]/.test(settings.key)))return sendJson(response,400,{error:'DeepSeek 设置不正确。'});
+        const key=settings.key||(hasDeepSeekKey(env)?env.OPENAI_API_KEY:'');
+        if(!key)return sendJson(response,503,{error:'原题识别需要 DeepSeek，请先填写密钥。'});
+        const address=request.socket.remoteAddress;
+        if(inFlight>=2||Date.now()-(lastGeneration.get(address)||0)<3000)return sendJson(response,429,{error:'正在识别，请稍后再试。'});
+        if(lastGeneration.size>1000)lastGeneration.clear();lastGeneration.set(address,Date.now());inFlight++;
+        try{return sendJson(response,200,await importOriginalQuestions(payload,{OPENAI_API_KEY:key,OPENAI_MODEL:settings.model},fetcher));}finally{inFlight--;}
+      }
       if (pathname === '/api/translate' && request.method === 'POST') {
         const origin=request.headers.origin;
         if(origin && new URL(origin).host!==request.headers.host)return sendJson(response,403,{error:'请从本站页面提交翻译。'});

@@ -39,7 +39,7 @@ export function textFromItems(items) {
   return text.replace(/([a-z])-\s*\n\s*([a-z])/gi, '$1$2').trim();
 }
 
-export async function extractPDF(pdf, { start, end, forceOCR, language, onProgress, signal }) {
+export async function extractPDF(pdf, { start, end, forceOCR, language, onProgress, signal, minTextLength=40 }) {
   if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end > pdf.numPages || end < start) {
     throw new Error(`请输入 1–${pdf.numPages} 以内的有效页码范围。`);
   }
@@ -56,7 +56,7 @@ export async function extractPDF(pdf, { start, end, forceOCR, language, onProgre
       const content = await page.getTextContent();
       let text = textFromItems(content.items);
       const letters = text.match(/[A-Za-z\u4e00-\u9fff]/g)?.length || 0;
-      if (forceOCR || letters < 60) {
+      if (forceOCR || letters < 6) {
         ocrPages++;
         if (!globalThis.Tesseract) throw new Error('OCR 组件加载失败，请刷新页面后再试。');
         if (!worker) {
@@ -86,7 +86,7 @@ export async function extractPDF(pdf, { start, end, forceOCR, language, onProgre
       page.cleanup();
     }
     const text = pages.filter(Boolean).join('\n\n');
-    if (text.trim().length < 40) throw new Error('没有识别到足够文字，请检查页面、扫描清晰度或识别语言。');
+    if (text.trim().length < minTextLength) throw new Error('没有识别到足够文字，请检查页面、扫描清晰度或识别语言。');
     return { text, ocrPages, pageCount: pages.length };
   } finally {
     if (worker) await worker.terminate();
